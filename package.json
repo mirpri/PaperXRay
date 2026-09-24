@@ -9,7 +9,9 @@
     "dev:web": "pnpm --filter @paper-xray/web dev",
     "dev:server": "pnpm --filter @paper-xray/server dev",
     "build": "pnpm -r build",
+    "pretest": "pnpm --filter @paper-xray/contracts build",
     "test": "pnpm -r test",
+    "pretypecheck": "pnpm --filter @paper-xray/contracts build",
     "typecheck": "pnpm -r typecheck",
     "lint": "eslint ."
   },
