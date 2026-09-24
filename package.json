@@ -13,7 +13,8 @@
     "test": "pnpm -r test",
     "pretypecheck": "pnpm --filter @paper-xray/contracts build",
     "typecheck": "pnpm -r typecheck",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "eval": "pnpm --filter @paper-xray/contracts build && pnpm --filter @paper-xray/server eval"
   },
   "devDependencies": {
     "@typescript-eslint/eslint-plugin": "^8.15.0",

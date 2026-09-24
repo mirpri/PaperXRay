@@ -1,0 +1,34 @@
+{
+  "pdf": "Agentix.pdf",
+  "contentHash": "60dad51efaaa6fc02d975f59def807ace25ef723b2887975248a0e4ab3681f8a",
+  "readingOrder": {
+    "source": "Transcribed by reading rendered page images of pages 2, 3 and 9 (left column, then right column), not taken from pdf.js output. Each snippet sits on one printed line, so hyphenated line breaks don't affect matching. Figure and table contents are deliberately excluded.",
+    "snippets": [
+      "programs, which scale LLM calls and output tokens to help",
+      "To address this, we introduce Agentix, an LLM serving",
+      "throughput of programs by 4-15× at the same latency",
+      "Large language models (LLMs) as autonomous agents",
+      "collaboration between multiple agents",
+      "The rise of inference-time techniques and agentic",
+      "illustrates the highly dynamic nature of agentic",
+      "Carlo Tree Search (MCTS), widely used for search and",
+      "planning for reasoning and web-based agents",
+      "Existing LLM serving engines, like vLLM",
+      "illustrates a burst of two long programs (A, B)",
+      "MLFQ successfully preempts",
+      "We present Agentix, an LLM inference system designed to",
+      "Agentix introduces a novel framework that leverages",
+      "Agentix assigns priorities to each LLM call based on their",
+      "Multi-level Program-based Scheduling",
+      "Anti-Starvation.",
+      "Memory Management. With preemptive scheduling, LLM",
+      "First, Agentix reduces total swaps by adopting multi-step",
+      "As agentic workloads scale, deploying multiple engine"
+    ]
+  },
+  "lensGold": {
+    "labelledBy": null,
+    "note": "Not labelled yet. Add one entry per issue a careful reviewer would flag for each lens: the verbatim sentence (or clause) as evidenceText. Precision/recall are only reported for lenses that have at least one entry here.",
+    "annotations": []
+  }
+}
