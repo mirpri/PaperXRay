@@ -1,0 +1,187 @@
+/* Palette per docs/02-decisions.md #9 and design/*.html: neutral gray (no
+   blue hue shift), agent color #D4A017, human color #40628C, small radii, no
+   soft shadows. --bg is the page canvas, --panel is nav/aside chrome,
+   --surface is cards/inputs on top of a panel. */
+:root {
+  --bg: #ededed;
+  --panel: #f7f7f7;
+  --surface: #ffffff;
+  --border: #d9d9d9;
+  --border-strong: #dbdbdb;
+  --text: #1a1a1a;
+  --text-muted: #6b6b6b;
+  --text-soft: #8a8a8a;
+  --agent: #d4a017;
+  --agent-soft: rgba(212, 160, 23, 0.26);
+  --agent-ink: #6e5200;
+  --human: #40628c;
+  --accent-blue-soft: #7fa3cc;
+
+  --font-ui: "IBM Plex Sans", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --font-serif: Spectral, Georgia, serif;
+
+  color-scheme: light;
+  color: var(--text);
+  background: var(--bg);
+  font: 14px/1.5 var(--font-ui);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: var(--human);
+  text-decoration: none;
+}
+a:hover {
+  color: #2e4766;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+}
+
+/* react-pdf-highlighter-extended's own bundled stylesheet assumes it's the
+   only thing on the page (its default is a dark #333 gutter behind the
+   pages, plus a matching dark scrollbar) — override both for the light
+   theme. !important because its stylesheet loads after ours (its CSS is a
+   side-effect import inside the component module, which only executes once
+   ReaderPage renders, i.e. after index.css), so an equal-specificity rule
+   here would otherwise lose on source order. */
+.PdfHighlighter {
+  background: var(--bg) !important;
+}
+.PdfHighlighter::-webkit-scrollbar-thumb {
+  background-color: #b8b8b8 !important;
+}
+.PdfHighlighter::-webkit-scrollbar-thumb:hover {
+  background-color: #9a9a9a !important;
+}
+.PdfHighlighter::-webkit-scrollbar-track,
+.PdfHighlighter::-webkit-scrollbar-track-piece {
+  background-color: var(--bg) !important;
+}
+
+/* react-pdf-highlighter-extended uses plain (non-CSS-modules) class names,
+   so we can safely recolor .TextHighlight__part per our own wrapper class —
+   agent (yellow) vs human (blue), matching design/03-icon.html's marker
+   semantics. !important overrides the library's own default yellow. */
+.pxr-highlight-agent .TextHighlight__part {
+  background: rgba(212, 160, 23, 0.3) !important;
+  box-shadow: inset 0 -2px 0 var(--agent);
+}
+.pxr-highlight-human .TextHighlight__part {
+  background: rgba(64, 98, 140, 0.16) !important;
+  box-shadow: inset 0 -2px 0 var(--human);
+}
+.pxr-highlight-agent .TextHighlight__part,
+.pxr-highlight-human .TextHighlight__part {
+  cursor: pointer;
+  pointer-events: auto;
+}
+/* `isScrolledTo` (driven by the library's own scrollToHighlight, see
+   PxrHighlightContainer.tsx) adds TextHighlight--scrolledTo automatically —
+   it clears itself once the user scrolls away, so no manual timer needed
+   here (unlike the sidebar card's .pxr-annotation-card-active below, which
+   this app does track manually and does need one). */
+.TextHighlight--scrolledTo .TextHighlight__part {
+  outline: 3px solid #e8482c;
+  outline-offset: 2px;
+  animation: pxr-jump-pulse 1.6s ease-out 1;
+}
+
+.pxr-annotation-card-active {
+  outline: 2px solid #e8482c;
+  outline-offset: 1px;
+  animation: pxr-jump-pulse 1.6s ease-out 2;
+}
+@keyframes pxr-jump-pulse {
+  0% {
+    box-shadow: 0 0 0 6px rgba(232, 72, 44, 0.45);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(232, 72, 44, 0);
+  }
+}
+
+/* PDF toolbar (zoom/page controls) — docked as a real bar above the
+   scrollable page area, not floating over the content. */
+.pxr-toolbar {
+  flex-shrink: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+}
+.pxr-toolbar button {
+  height: 26px;
+  min-width: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+}
+.pxr-toolbar button:hover {
+  background: var(--surface);
+  border-color: var(--border-strong);
+}
+.pxr-toolbar input {
+  width: 36px;
+  height: 22px;
+  text-align: center;
+  font-size: 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--surface);
+  color: var(--text);
+}
+.pxr-toolbar .pxr-toolbar-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border-strong);
+  margin: 0 4px;
+}
+
+/* Draggable divider between the PDF pane and the annotations sidebar. */
+.pxr-resizer {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+.pxr-resizer::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-strong);
+}
+.pxr-resizer:hover::after,
+.pxr-resizer.pxr-resizer-active::after {
+  background: var(--human);
+}
