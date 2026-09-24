@@ -18,6 +18,9 @@ const SPEC: LensSpec = {
   outputSchema: { requiresEvidenceSpan: true, requiresComment: true, requiresSeverity: true },
   maxAnnotations: 3,
   executionContext: "org-server",
+  ownerId: null,
+  strictScope: false,
+  shareRunsWithOrg: false,
 };
 
 const NODE: IrNode = {

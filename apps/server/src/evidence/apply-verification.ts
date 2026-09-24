@@ -16,8 +16,10 @@ export function verifyAndFilterAgentAnnotations(params: {
   normalizedText: string;
   nodes: IrNode[];
   scope: LensScope;
+  /** The lens asked for out-of-scope evidence to be dropped rather than downgraded (LensSpec.strictScope). */
+  strictScope?: boolean;
 }): AgentAnnotation[] {
-  const { candidates, normalizedText, nodes, scope } = params;
+  const { candidates, normalizedText, nodes, scope, strictScope = false } = params;
   const kept: AgentAnnotation[] = [];
 
   for (const candidate of candidates) {
@@ -31,6 +33,7 @@ export function verifyAndFilterAgentAnnotations(params: {
     if (!result.existsInText) continue;
 
     if (!result.withinScope) {
+      if (strictScope) continue;
       kept.push({ ...candidate, severity: "info", confidence: Math.min(candidate.confidence, 0.2) });
       continue;
     }

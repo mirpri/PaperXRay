@@ -337,6 +337,49 @@ function toUser(row: UserRow): User {
   return { id: row.id, displayName: row.display_name, email: row.email, role: row.role };
 }
 
+export async function listUsers(): Promise<User[]> {
+  const [rows] = await pool.query<UserRow[]>("SELECT * FROM users ORDER BY created_at ASC");
+  return rows.map(toUser);
+}
+
+/**
+ * Changes a user's role (docs/02-decisions.md #4). Refuses to demote the
+ * last remaining admin, which would lock everyone out of user management
+ * short of editing the database by hand. The count and the update run in
+ * one transaction with the admin rows locked, so two concurrent demotions
+ * can't both pass the check.
+ */
+export async function setUserRole(
+  userId: string,
+  role: Role,
+): Promise<{ ok: true; user: User } | { ok: false; reason: "not-found" | "last-admin" }> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [targetRows] = await conn.query<UserRow[]>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
+    const target = targetRows[0];
+    if (!target) {
+      await conn.rollback();
+      return { ok: false, reason: "not-found" };
+    }
+    if (target.role === "admin" && role !== "admin") {
+      const [admins] = await conn.query<UserRow[]>("SELECT id FROM users WHERE role = 'admin' FOR UPDATE");
+      if (admins.length <= 1) {
+        await conn.rollback();
+        return { ok: false, reason: "last-admin" };
+      }
+    }
+    await conn.query("UPDATE users SET role = ? WHERE id = ?", [role, userId]);
+    await conn.commit();
+    return { ok: true, user: { ...toUser(target), role } };
+  } catch (err) {
+    await conn.rollback();
+    throw err;
+  } finally {
+    conn.release();
+  }
+}
+
 export async function findUserById(id: string): Promise<User | null> {
   const [rows] = await pool.query<UserRow[]>("SELECT * FROM users WHERE id = ? LIMIT 1", [id]);
   return rows[0] ? toUser(rows[0]) : null;

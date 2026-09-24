@@ -16,8 +16,10 @@ export function runFakeLens(params: {
   normalizedText: string;
   /** Node the evidenceSpan's anchor is attributed to — typically the document's first paragraph node. */
   anchorNodeId: string;
+  /** The lens this stands in for, so the result is attributed to (and counted under) the lens the user actually ran. */
+  lens?: { id: string; version: string };
 }): AgentAnnotation[] {
-  const { docId, normalizedText, anchorNodeId } = params;
+  const { docId, normalizedText, anchorNodeId, lens } = params;
   const runId = uuid();
   const totalLength = codePointLength(normalizedText);
 
@@ -32,8 +34,8 @@ export function runFakeLens(params: {
   const annotation: AgentAnnotation = {
     id: uuid(),
     docId,
-    agentId: "fake-lens",
-    agentVersion: "0.0.1",
+    agentId: lens?.id ?? "fake-lens",
+    agentVersion: lens?.version ?? "0.0.1",
     runId,
     ownerId: null,
     anchor: {

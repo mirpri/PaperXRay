@@ -78,3 +78,14 @@ describe("verifyAndFilterAgentAnnotations", () => {
     expect(result.map((a) => a.id)).toEqual(["good"]);
   });
 });
+
+describe("verifyAndFilterAgentAnnotations with strictScope", () => {
+  it("drops out-of-scope evidence instead of downgrading it", () => {
+    const nodes: IrNode[] = [
+      { id: "n1", type: "table", parentId: null, order: 0, charRange: { start: 20, end: 30 }, pageHint: 1 },
+    ];
+    const common = { candidates: [annotation()], normalizedText: TEXT, nodes, scope: "table" as const };
+    expect(verifyAndFilterAgentAnnotations(common)).toHaveLength(1);
+    expect(verifyAndFilterAgentAnnotations({ ...common, strictScope: true })).toHaveLength(0);
+  });
+});

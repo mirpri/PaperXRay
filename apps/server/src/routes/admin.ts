@@ -1,6 +1,9 @@
 import { Router, type Router as RouterType } from "express";
 import { requireRole } from "../auth/middleware.js";
-import { getSsoConfigPublic, updateSsoConfig } from "../db/repositories.js";
+import type { Role } from "@paper-xray/contracts";
+import { getSsoConfigPublic, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
+
+const ROLES: readonly Role[] = ["admin", "curator", "member"];
 
 export const adminRouter: RouterType = Router();
 
@@ -66,6 +69,34 @@ adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next
       scopes,
     });
     res.json({ ssoConfig: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** User and role management (docs/02-decisions.md #4). SSO only supplies identity; roles live here. */
+adminRouter.get("/admin/users", requireRole("admin"), async (_req, res, next) => {
+  try {
+    res.json({ users: await listUsers() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+adminRouter.patch("/admin/users/:id/role", requireRole("admin"), async (req, res, next) => {
+  try {
+    const { role } = req.body as { role?: unknown };
+    if (!ROLES.includes(role as Role)) {
+      res.status(400).json({ error: `role must be one of: ${ROLES.join(", ")}` });
+      return;
+    }
+    const result = await setUserRole(req.params.id, role as Role);
+    if (!result.ok) {
+      if (result.reason === "not-found") res.status(404).json({ error: "User not found" });
+      else res.status(409).json({ error: "Can't remove the last admin — promote someone else first" });
+      return;
+    }
+    res.json({ user: result.user });
   } catch (err) {
     next(err);
   }

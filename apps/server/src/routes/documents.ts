@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Router, type Router as RouterType } from "express";
-import type { Document } from "@paper-xray/contracts";
+import type { AgentAnnotation, Document, LensSpec, Node as IrNode } from "@paper-xray/contracts";
+import { sanitizeLensItems } from "@paper-xray/contracts";
 import multer from "multer";
 import { config } from "../config.js";
 import { extractPages } from "../extraction/extract-pages.js";
 import { buildDocument } from "../reassembly/build-document.js";
-import { runLensById } from "../lenses/run-all-lenses.js";
+import { runOrgLens } from "../lenses/run-org-lens.js";
+import { lensItemsToCandidates } from "../lenses/run-model-lens.js";
+import { findLensById } from "../db/lens-repository.js";
 import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
 import { requireAuth } from "../auth/middleware.js";
 import { normalizePaperUrl } from "../import/normalize-url.js";
@@ -201,53 +204,105 @@ documentsRouter.get("/documents/:id/lens-runs", requireAuth, async (req, res, ne
   }
 });
 
+/**
+ * Persists one lens run: server-side evidence re-verification
+ * (docs/02-decisions.md #6 — never trust a lens's own evidence claim,
+ * server- or client-executed), then insert, record the run and broadcast.
+ */
+async function persistLensRun(params: {
+  document: Document;
+  spec: LensSpec;
+  nodes: IrNode[];
+  candidates: AgentAnnotation[];
+  ownerId: string | null;
+}): Promise<number> {
+  const { document, spec, nodes, candidates, ownerId } = params;
+  const verified = verifyAndFilterAgentAnnotations({
+    candidates,
+    normalizedText: document.normalizedText,
+    nodes,
+    scope: spec.scope,
+    strictScope: spec.strictScope,
+  });
+  await insertAgentAnnotations(verified);
+  // Recorded even when verified.length is 0 — a lens that ran and found
+  // nothing is a different fact from one that was never triggered, and
+  // the frontend's filter chips (dashed vs. solid) need to tell those
+  // apart rather than inferring "has run" from annotation count.
+  await recordLensRun(document.id, spec.id, verified.length, ownerId);
+  broadcastAnnotationsChanged(document.id);
+  return verified.length;
+}
+
+/** Runs an org lens server-side against the org model endpoint. */
 documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (req, res, next) => {
-  console.log(`POST /documents/${req.params.id}/lenses/${req.params.lensId}/run (user ${req.user?.id})`);
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
       res.status(404).json({ error: "Document not found" });
       return;
     }
-    const nodes = await listNodesForDocument(req.params.id);
-    if (nodes.length === 0) {
-      await recordLensRun(document.id, req.params.lensId, 0);
-      res.status(202).json({ producedCount: 0 });
+    const spec = await findLensById(req.params.lensId);
+    if (!spec || spec.ownerId !== null) {
+      res.status(404).json({ error: "Org lens not found" });
       return;
     }
+    const nodes = await listNodesForDocument(document.id);
 
-    let candidates;
+    let candidates: AgentAnnotation[];
     try {
-      candidates = await runLensById({
-        lensId: req.params.lensId,
-        docId: document.id,
-        normalizedText: document.normalizedText,
-        nodes,
-      });
+      candidates = await runOrgLens({ spec, docId: document.id, normalizedText: document.normalizedText, nodes });
     } catch (err) {
-      console.error(`Lens run failed (doc ${document.id}, lens ${req.params.lensId}):`, err);
-      res.status(400).json({ error: err instanceof Error ? err.message : "Unknown lens id" });
+      console.error(`Lens run failed (doc ${document.id}, lens ${spec.id}):`, err);
+      res.status(502).json({ error: err instanceof Error ? err.message : "Lens run failed" });
       return;
     }
 
-    // Server-side re-verification per docs/02-decisions.md #6 — never trust
-    // a lens's own evidenceSpan, client- or server-executed.
-    const verified = verifyAndFilterAgentAnnotations({
-      candidates,
+    const producedCount = await persistLensRun({ document, spec, nodes, candidates, ownerId: null });
+    res.status(202).json({ producedCount, submittedCount: candidates.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Accepts the output of a personal lens the caller ran in their own browser
+ * against their own model endpoint (docs/02-decisions.md #6 — the API key
+ * never reaches this server). Body: `{ items: [{evidenceText, comment,
+ * severity, confidence}] }`, i.e. the model's raw quoted output. The server
+ * locates every quote itself and re-verifies it; client-side offsets are
+ * never accepted.
+ */
+documentsRouter.post("/documents/:id/lenses/:lensId/client-run", requireAuth, async (req, res, next) => {
+  try {
+    const document = await findDocumentById(req.params.id);
+    if (!document) {
+      res.status(404).json({ error: "Document not found" });
+      return;
+    }
+    const spec = await findLensById(req.params.lensId);
+    if (!spec || spec.ownerId !== req.user!.id) {
+      res.status(404).json({ error: "Personal lens not found" });
+      return;
+    }
+    const rawItems = (req.body as { items?: unknown }).items;
+    if (!Array.isArray(rawItems)) {
+      res.status(400).json({ error: "items must be an array" });
+      return;
+    }
+
+    const nodes = await listNodesForDocument(document.id);
+    const items = sanitizeLensItems(rawItems, spec.maxAnnotations);
+    const candidates = lensItemsToCandidates({
+      items,
+      spec,
+      docId: document.id,
       normalizedText: document.normalizedText,
       nodes,
-      scope: "all",
+      ownerId: req.user!.id,
     });
-    await insertAgentAnnotations(verified);
-    // Recorded even when verified.length is 0 — a lens that ran and found
-    // nothing is a different fact from one that was never triggered, and
-    // the frontend's filter chips (dashed vs. solid) need to tell those
-    // apart rather than inferring "has run" from annotation count.
-    await recordLensRun(document.id, req.params.lensId, verified.length);
-    broadcastAnnotationsChanged(document.id);
-
-    console.log(`Lens run done (doc ${document.id}, lens ${req.params.lensId}): ${verified.length} annotation(s)`);
-    res.status(202).json({ producedCount: verified.length });
+    const producedCount = await persistLensRun({ document, spec, nodes, candidates, ownerId: req.user!.id });
+    res.status(202).json({ producedCount, submittedCount: rawItems.length });
   } catch (err) {
     next(err);
   }

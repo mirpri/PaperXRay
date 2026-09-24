@@ -12,6 +12,8 @@ import { adminRouter } from "./routes/admin.js";
 import { lensesRouter } from "./routes/lenses.js";
 import { initSocket } from "./realtime/socket.js";
 import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/repositories.js";
+import { seedPresetLenses } from "./db/lens-repository.js";
+import { PRESET_LENSES } from "./lenses/presets.js";
 
 const app = express();
 app.use(cors({ origin: config.webOrigin, credentials: true }));
@@ -37,6 +39,7 @@ initSocket(httpServer);
 
 await seedSsoClientIdIfBlank(config.sso.mirpassClientId);
 await seedSsoClientSecretIfBlank(config.sso.mirpassClientSecret);
+await seedPresetLenses(PRESET_LENSES);
 
 httpServer.listen(config.port, () => {
   console.log(`paper-xray server listening on :${config.port}`);

@@ -43,7 +43,31 @@ export interface LensSpec {
    * it does not carry any credential.
    */
   executionContext: "org-server" | "personal-client";
+  /** Owning user for a personal lens; null for org lenses (editable by curators). */
+  ownerId: string | null;
+  /**
+   * When evidence falls outside `scope`: true drops the annotation, false
+   * (default) keeps it downgraded to info / low confidence. Evidence that
+   * doesn't exist in the text is always dropped regardless.
+   */
+  strictScope: boolean;
+  /** Default visibility of a personal lens's runs: false = `private` (docs/02-decisions.md #5). Org lens runs are always `org`. */
+  shareRunsWithOrg: boolean;
 }
+
+/** The user-editable part of a LensSpec — id, version, owner and execution context are assigned by the server. */
+export interface LensDraft {
+  name: string;
+  description: string;
+  scope: LensScope;
+  instruction: string;
+  maxAnnotations: number;
+  strictScope: boolean;
+  shareRunsWithOrg: boolean;
+}
+
+export const LENS_SCOPES: readonly LensScope[] = ["all", "section", "paragraph", "equation", "figure", "table", "caption"];
+export const MAX_ANNOTATIONS_LIMIT = 30;
 
 /** Minimum default severities a lens output validator should accept. */
 export const DEFAULT_SEVERITIES: readonly Severity[] = [

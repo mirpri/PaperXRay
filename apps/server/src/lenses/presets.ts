@@ -22,6 +22,9 @@ export const PRESET_LENSES: LensSpec[] = [
     outputSchema: { requiresEvidenceSpan: true, requiresComment: true, requiresSeverity: true },
     maxAnnotations: 6,
     executionContext: "org-server",
+    ownerId: null,
+    strictScope: false,
+    shareRunsWithOrg: true,
   },
   {
     id: "preset-experiment-stats",
@@ -38,6 +41,9 @@ export const PRESET_LENSES: LensSpec[] = [
     outputSchema: { requiresEvidenceSpan: true, requiresComment: true, requiresSeverity: true },
     maxAnnotations: 6,
     executionContext: "org-server",
+    ownerId: null,
+    strictScope: false,
+    shareRunsWithOrg: true,
   },
   {
     id: "preset-reproducibility",
@@ -53,6 +59,9 @@ export const PRESET_LENSES: LensSpec[] = [
     outputSchema: { requiresEvidenceSpan: true, requiresComment: true, requiresSeverity: true },
     maxAnnotations: 6,
     executionContext: "org-server",
+    ownerId: null,
+    strictScope: false,
+    shareRunsWithOrg: true,
   },
   {
     id: "preset-novelty",
@@ -68,5 +77,8 @@ export const PRESET_LENSES: LensSpec[] = [
     outputSchema: { requiresEvidenceSpan: true, requiresComment: true, requiresSeverity: true },
     maxAnnotations: 6,
     executionContext: "org-server",
+    ownerId: null,
+    strictScope: false,
+    shareRunsWithOrg: true,
   },
 ];
