@@ -1,14 +1,7 @@
-import type { Annotation } from "@paper-xray/contracts";
+import type { Annotation, Visibility } from "@paper-xray/contracts";
 import { isAgentAnnotation, sliceByCodePoints } from "@paper-xray/contracts";
 import { Avatar } from "./Avatar";
 
-const LENS_LABELS: Record<string, string> = {
-  "preset-methodology-review": "Methodology",
-  "preset-experiment-stats": "Experiment & Stats",
-  "preset-reproducibility": "Reproducibility",
-  "preset-novelty": "Novelty",
-  "fake-lens": "Fake Lens",
-};
 
 const SEVERITY_COLOR: Record<string, string> = {
   high: "var(--agent)",
@@ -26,14 +19,23 @@ export function AnnotationCard({
   normalizedText,
   active,
   onJumpTo,
+  lensName,
+  currentUserId,
+  onSetRunVisibility,
 }: {
   annotation: Annotation;
   normalizedText: string;
+  /** Display name of the lens that produced an agent annotation (falls back to its id, e.g. for a deleted lens). */
+  lensName?: string;
+  currentUserId: string | null;
+  /** Share/unshare the whole run this annotation belongs to — offered only on the viewer's own personal-lens runs. */
+  onSetRunVisibility?: (runId: string, visibility: Visibility) => void;
   /** True right after this annotation's PDF mark was clicked — see pages/ReaderPage.tsx's activeAnnotationId. */
   active: boolean;
   onJumpTo: (annotationId: string) => void;
 }) {
   const agent = isAgentAnnotation(annotation);
+  const ownRun = agent && annotation.ownerId !== null && annotation.ownerId === currentUserId;
 
   return (
     <div
@@ -63,8 +65,13 @@ export function AnnotationCard({
                 letterSpacing: "0.06em",
               }}
             >
-              {LENS_LABELS[annotation.agentId] ?? annotation.agentId}
+              {lensName ?? annotation.agentId}
             </span>
+            {annotation.visibility === "private" && (
+              <span className="mono" style={{ fontSize: 9, color: "var(--text-muted)" }}>
+                PRIVATE
+              </span>
+            )}
           </div>
           <span
             className="mono"
@@ -85,6 +92,11 @@ export function AnnotationCard({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <Avatar name="Member" size={21} />
           <span style={{ fontSize: 12, fontWeight: 500 }}>Human note</span>
+          {annotation.visibility === "private" && (
+            <span className="mono" style={{ fontSize: 9, color: "var(--text-muted)" }}>
+              PRIVATE
+            </span>
+          )}
         </div>
       )}
 
@@ -130,6 +142,23 @@ export function AnnotationCard({
         >
           Jump to text
         </button>
+        {ownRun && onSetRunVisibility && (
+          <button
+            onClick={() => onSetRunVisibility(annotation.runId, annotation.visibility === "private" ? "org" : "private")}
+            title="Applies to every annotation from this run"
+            style={{
+              fontSize: 11,
+              height: 29,
+              padding: "0 10px",
+              border: "1px solid var(--border-strong)",
+              borderRadius: 3,
+              background: "var(--surface)",
+              color: "var(--text)",
+            }}
+          >
+            {annotation.visibility === "private" ? "Share run with org" : "Make run private"}
+          </button>
+        )}
       </div>
     </div>
   );

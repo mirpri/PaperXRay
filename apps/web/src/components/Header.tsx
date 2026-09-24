@@ -36,6 +36,10 @@ export function Header({ left, right }: { left?: ReactNode; right?: ReactNode })
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {right}
+        <nav style={{ display: "flex", gap: 14, fontSize: 12 }}>
+          <Link to="/lenses">Lenses</Link>
+          {user.role === "admin" && <Link to="/admin">Admin</Link>}
+        </nav>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <Avatar name={user.displayName} />
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{user.displayName}</span>

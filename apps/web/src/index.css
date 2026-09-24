@@ -185,3 +185,74 @@ code,
 .pxr-resizer.pxr-resizer-active::after {
   background: var(--human);
 }
+
+/* Form controls shared by the lens settings and admin pages. */
+.pxr-label {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.pxr-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}
+textarea.pxr-input {
+  height: auto;
+  min-height: 120px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.pxr-input:focus {
+  outline: 2px solid var(--accent-blue-soft);
+  outline-offset: -1px;
+}
+.pxr-btn {
+  height: 32px;
+  padding: 0 13px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+}
+.pxr-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pxr-btn-primary {
+  color: #ffffff;
+  background: var(--text);
+  border-color: var(--text);
+}
+.pxr-btn-danger {
+  color: #a32020;
+}
+.pxr-section-title {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.pxr-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.pxr-check input {
+  margin-top: 2px;
+}
