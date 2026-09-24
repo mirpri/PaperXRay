@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { DocumentSummary } from "@paper-xray/contracts";
-import { fetchDocuments, uploadDocument } from "../api";
+import { fetchDocuments, importDocumentFromUrl, uploadDocument } from "../api";
 import { Header } from "../components/Header";
 
 function titleFor(doc: DocumentSummary): string {
@@ -16,7 +16,8 @@ function formatDate(iso: string): string {
 export function LibraryPage() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
-  const [status, setStatus] = useState<"idle" | "uploading" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "uploading" | "importing" | "error">("idle");
+  const [importUrl, setImportUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function reload() {
@@ -43,6 +44,22 @@ export function LibraryPage() {
     }
   }
 
+  async function handleImport(e: React.FormEvent) {
+    e.preventDefault();
+    if (!importUrl.trim()) return;
+    setStatus("importing");
+    setError(null);
+    try {
+      const doc = await importDocumentFromUrl(importUrl.trim());
+      navigate(`/documents/${doc.id}`);
+    } catch (err) {
+      setStatus("error");
+      setError(String(err));
+    }
+  }
+
+  const busy = status === "uploading" || status === "importing";
+
   return (
     <div style={{ minHeight: "100svh", background: "var(--bg)" }}>
       <Header />
@@ -67,11 +84,47 @@ export function LibraryPage() {
               type="file"
               accept="application/pdf"
               onChange={handleFileChange}
-              disabled={status === "uploading"}
+              disabled={busy}
               style={{ display: "none" }}
             />
           </label>
         </div>
+
+        <form onSubmit={handleImport} style={{ display: "flex", gap: 8, marginBottom: 24 }}>
+          <input
+            type="url"
+            value={importUrl}
+            onChange={(e) => setImportUrl(e.target.value)}
+            placeholder="Import from URL — e.g. https://arxiv.org/abs/1706.03762"
+            disabled={busy}
+            style={{
+              flexGrow: 1,
+              height: 34,
+              padding: "0 10px",
+              fontSize: 12,
+              border: "1px solid var(--border-strong)",
+              borderRadius: 3,
+              background: "var(--surface)",
+              color: "var(--text)",
+            }}
+          />
+          <button
+            type="submit"
+            disabled={busy || !importUrl.trim()}
+            style={{
+              height: 34,
+              padding: "0 15px",
+              fontSize: 12,
+              fontWeight: 500,
+              border: "1px solid var(--border-strong)",
+              borderRadius: 3,
+              background: "var(--surface)",
+              color: "var(--text)",
+            }}
+          >
+            {status === "importing" ? "Importing…" : "Import"}
+          </button>
+        </form>
 
         {status === "error" && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
 

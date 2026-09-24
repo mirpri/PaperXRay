@@ -43,6 +43,21 @@ export const config = {
   // re-render pages with pdfjs-dist for the highlight overlay (reverse
   // mapping assumes the same bytes on both sides, docs/02-decisions.md #12).
   uploadsDir: process.env.UPLOADS_DIR ?? path.join(__dirname, "..", "uploads"),
+  urlImport: {
+    // Host allowlist for POST /documents/import (docs/02-decisions.md #7).
+    // A host matches itself and its subdomains. Override with a
+    // comma-separated IMPORT_ALLOWED_HOSTS; the default covers the usual
+    // open-access paper sources.
+    allowedHosts: (
+      process.env.IMPORT_ALLOWED_HOSTS ??
+      "arxiv.org,openreview.net,aclanthology.org,proceedings.neurips.cc,proceedings.mlr.press,openaccess.thecvf.com,usenix.org,biorxiv.org,medrxiv.org"
+    )
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean),
+    maxBytes: 50 * 1024 * 1024,
+    timeoutMs: 30_000,
+  },
   ppio: {
     apiKey: process.env.PPIO_API_KEY ?? "",
     baseUrl: process.env.PPIO_BASE_URL ?? "https://api.ppio.com/openai",

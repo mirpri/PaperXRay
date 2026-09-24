@@ -34,6 +34,22 @@ export async function uploadDocument(file: File): Promise<Document> {
   return body.document;
 }
 
+/** Server fetches the PDF itself (arXiv /abs/ links are canonicalized to the PDF), under its host allowlist + SSRF policy. */
+export async function importDocumentFromUrl(url: string): Promise<Document> {
+  const res = await fetch(`${API_BASE}/documents/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Import failed: ${res.status}`);
+  }
+  const body = (await res.json()) as { document: Document };
+  return body.document;
+}
+
 export async function fetchDocuments(): Promise<DocumentSummary[]> {
   const res = await fetch(`${API_BASE}/documents`, { credentials: "include" });
   if (!res.ok) {

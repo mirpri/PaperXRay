@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Router, type Router as RouterType } from "express";
+import type { Document } from "@paper-xray/contracts";
 import multer from "multer";
 import { config } from "../config.js";
 import { extractPages } from "../extraction/extract-pages.js";
@@ -9,6 +10,8 @@ import { buildDocument } from "../reassembly/build-document.js";
 import { runLensById } from "../lenses/run-all-lenses.js";
 import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
 import { requireAuth } from "../auth/middleware.js";
+import { normalizePaperUrl } from "../import/normalize-url.js";
+import { fetchPdf, ImportError } from "../import/safe-fetch.js";
 import {
   createDocumentWithNodes,
   findDocumentByContentHash,
@@ -44,42 +47,79 @@ const upload = multer({
   },
 });
 
+/**
+ * Shared by upload and URL import: same bytes = same document, however or
+ * whoever brought them in (docs/02-decisions.md #2).
+ */
+async function ingestPdf(bytes: Buffer, originalFilename: string): Promise<{ document: Document; deduped: boolean }> {
+  const contentHash = createHash("sha256").update(bytes).digest("hex");
+
+  const existing = await findDocumentByContentHash(contentHash);
+  if (existing) return { document: existing, deduped: true };
+
+  // pdfjs-dist rejects Node's Buffer (a Uint8Array subclass) outright; needs a plain Uint8Array.
+  const pages = await extractPages(new Uint8Array(bytes));
+  const { normalizedText, charMap, nodes } = buildDocument(pages, contentHash);
+  const { document } = await createDocumentWithNodes({
+    contentHash,
+    originalFilename,
+    pageCount: pages.length,
+    normalizedText,
+    charMap,
+    nodes,
+  });
+
+  await mkdir(config.uploadsDir, { recursive: true });
+  await writeFile(pdfPathForHash(contentHash), bytes);
+
+  // Lenses don't run automatically on ingest — each lens is triggered on
+  // demand from the reader (its filter chip shows dashed until then), see
+  // POST /documents/:id/lenses/:lensId/run below.
+  return { document, deduped: false };
+}
+
 documentsRouter.post("/documents", requireAuth, upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: "Missing file field 'file'" });
       return;
     }
+    const { document, deduped } = await ingestPdf(req.file.buffer, req.file.originalname);
+    res.status(deduped ? 200 : 201).json({ document, deduped });
+  } catch (err) {
+    next(err);
+  }
+});
 
-    const contentHash = createHash("sha256").update(req.file.buffer).digest("hex");
-
-    // Same PDF bytes = same document, however/whoever uploaded it (docs/02-decisions.md #2).
-    const existing = await findDocumentByContentHash(contentHash);
-    if (existing) {
-      res.status(200).json({ document: existing, deduped: true });
+/** Import by URL (docs/02-decisions.md #7): canonicalize (arXiv /abs/ vs /pdf/ etc.), then fetch under the SSRF policy in ../import/safe-fetch.ts. */
+documentsRouter.post("/documents/import", requireAuth, async (req, res, next) => {
+  try {
+    const { url } = req.body as { url?: unknown };
+    if (typeof url !== "string" || url.trim().length === 0) {
+      res.status(400).json({ error: "url is required" });
       return;
     }
 
-    // pdfjs-dist rejects Node's Buffer (a Uint8Array subclass) outright; needs a plain Uint8Array.
-    const pages = await extractPages(new Uint8Array(req.file.buffer));
-    const { normalizedText, charMap, nodes } = buildDocument(pages, contentHash);
-    const { document } = await createDocumentWithNodes({
-      contentHash,
-      originalFilename: req.file.originalname,
-      pageCount: pages.length,
-      normalizedText,
-      charMap,
-      nodes,
-    });
+    let bytes: Buffer;
+    let suggestedFilename: string;
+    try {
+      const normalized = normalizePaperUrl(url);
+      suggestedFilename = normalized.suggestedFilename;
+      bytes = await fetchPdf(normalized.fetchUrl, config.urlImport);
+    } catch (err) {
+      if (err instanceof ImportError) {
+        res.status(err.status).json({ error: err.message });
+        return;
+      }
+      if (err instanceof Error && err.message === "Not a valid URL") {
+        res.status(400).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
 
-    await mkdir(config.uploadsDir, { recursive: true });
-    await writeFile(pdfPathForHash(contentHash), req.file.buffer);
-
-    // Lenses no longer run automatically on upload — each preset lens is
-    // triggered on demand from the reader (its filter chip shows dashed
-    // until then), see POST /documents/:id/lenses/:lensId/run below.
-
-    res.status(201).json({ document, deduped: false });
+    const { document, deduped } = await ingestPdf(bytes, suggestedFilename);
+    res.status(deduped ? 200 : 201).json({ document, deduped });
   } catch (err) {
     next(err);
   }
