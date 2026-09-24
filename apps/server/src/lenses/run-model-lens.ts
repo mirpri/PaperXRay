@@ -118,6 +118,7 @@ export async function runModelLens(params: {
       agentId: spec.id,
       agentVersion: spec.version,
       runId,
+      ownerId: null,
       anchor: { charRange: range, contextPrefix: "", contextSuffix: "", nodeId: node.id },
       evidenceSpan: range,
       comment: item.comment,

@@ -1,6 +1,19 @@
 import type { Server as HttpServer } from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import { config } from "../config.js";
+import { SESSION_COOKIE_NAME } from "../auth/session.js";
+import { verify } from "../auth/signed-value.js";
+
+/** Reads one cookie out of a raw `Cookie:` header without pulling cookie-parser into socket.io's middleware chain. */
+function readCookie(header: string | undefined, name: string): string | undefined {
+  if (!header) return undefined;
+  for (const part of header.split(";")) {
+    const eq = part.indexOf("=");
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return undefined;
+}
 
 let io: SocketIoServer | null = null;
 
@@ -14,7 +27,19 @@ let io: SocketIoServer | null = null;
  */
 export function initSocket(server: HttpServer): SocketIoServer {
   io = new SocketIoServer(server, {
-    cors: { origin: config.webOrigin },
+    cors: { origin: config.webOrigin, credentials: true },
+  });
+
+  // Same session cookie as the HTTP API — an org-only deployment
+  // (docs/02-decisions.md #3) shouldn't let anonymous clients watch which
+  // documents are being annotated.
+  io.use((socket, next) => {
+    const raw = readCookie(socket.handshake.headers.cookie, SESSION_COOKIE_NAME);
+    if (!verify(raw, config.session.secret)) {
+      next(new Error("Login required"));
+      return;
+    }
+    next();
   });
 
   io.on("connection", (socket) => {

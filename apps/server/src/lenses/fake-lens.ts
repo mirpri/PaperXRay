@@ -35,6 +35,7 @@ export function runFakeLens(params: {
     agentId: "fake-lens",
     agentVersion: "0.0.1",
     runId,
+    ownerId: null,
     anchor: {
       charRange: evidenceSpan,
       contextPrefix: "",

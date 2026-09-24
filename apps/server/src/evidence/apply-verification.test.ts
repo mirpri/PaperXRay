@@ -11,6 +11,7 @@ function annotation(overrides: Partial<AgentAnnotation> = {}): AgentAnnotation {
     agentId: "test-lens",
     agentVersion: "1.0.0",
     runId: "run1",
+    ownerId: null,
     anchor: { charRange: { start: 0, end: 10 }, contextPrefix: "", contextSuffix: "", nodeId: "n1" },
     evidenceSpan: { start: 0, end: 10 },
     comment: "test comment",

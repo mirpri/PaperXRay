@@ -121,19 +121,25 @@ interface LensRunRow extends RowDataPacket {
  * from one that was never triggered (the frontend's filter chips need to
  * tell those apart, see apps/web/src/pages/ReaderPage.tsx).
  */
-export async function recordLensRun(docId: string, lensId: string, producedCount: number): Promise<void> {
+export async function recordLensRun(
+  docId: string,
+  lensId: string,
+  producedCount: number,
+  ownerId: string | null = null,
+): Promise<void> {
   await pool.query(
-    `INSERT INTO lens_runs (doc_id, lens_id, produced_count)
-     VALUES (?, ?, ?)
+    `INSERT INTO lens_runs (doc_id, lens_id, owner_id, produced_count)
+     VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE produced_count = VALUES(produced_count), ran_at = CURRENT_TIMESTAMP(3)`,
-    [docId, lensId, producedCount],
+    [docId, lensId, ownerId, producedCount],
   );
 }
 
-export async function listLensRunsForDocument(docId: string): Promise<LensRun[]> {
+/** Org-lens runs plus the viewer's own personal-lens runs. */
+export async function listLensRunsForDocument(docId: string, viewerId: string): Promise<LensRun[]> {
   const [rows] = await pool.query<LensRunRow[]>(
-    "SELECT lens_id, produced_count, ran_at FROM lens_runs WHERE doc_id = ?",
-    [docId],
+    "SELECT lens_id, produced_count, ran_at FROM lens_runs WHERE doc_id = ? AND (owner_id IS NULL OR owner_id = ?)",
+    [docId, viewerId],
   );
   return rows.map((row) => ({
     lensId: row.lens_id,
@@ -213,6 +219,7 @@ interface AgentAnnotationRow extends RowDataPacket {
   agent_id: string;
   agent_version: string;
   run_id: string;
+  owner_id: string | null;
   anchor: string;
   evidence_span: string;
   comment: string;
@@ -229,6 +236,7 @@ function toAgentAnnotation(row: AgentAnnotationRow): AgentAnnotation {
     agentId: row.agent_id,
     agentVersion: row.agent_version,
     runId: row.run_id,
+    ownerId: row.owner_id,
     anchor: JSON.parse(row.anchor),
     evidenceSpan: JSON.parse(row.evidence_span),
     comment: row.comment,
@@ -250,14 +258,15 @@ export async function insertAgentAnnotations(
     for (const a of annotations) {
       await conn.query(
         `INSERT INTO agent_annotations
-          (id, doc_id, agent_id, agent_version, run_id, anchor, evidence_span, comment, severity, confidence, visibility, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, doc_id, agent_id, agent_version, run_id, owner_id, anchor, evidence_span, comment, severity, confidence, visibility, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           a.id,
           a.docId,
           a.agentId,
           a.agentVersion,
           a.runId,
+          a.ownerId,
           JSON.stringify(a.anchor),
           JSON.stringify(a.evidenceSpan),
           a.comment,
@@ -277,14 +286,43 @@ export async function insertAgentAnnotations(
   }
 }
 
+/** Only runs the viewer may see: every `org` run, plus the viewer's own `private` runs (docs/02-decisions.md #5). */
 export async function listAgentAnnotationsForDoc(
   docId: string,
+  viewerId: string,
 ): Promise<AgentAnnotation[]> {
   const [rows] = await pool.query<AgentAnnotationRow[]>(
-    "SELECT * FROM agent_annotations WHERE doc_id = ? ORDER BY created_at ASC",
-    [docId],
+    "SELECT * FROM agent_annotations WHERE doc_id = ? AND (visibility = 'org' OR owner_id = ?) ORDER BY created_at ASC",
+    [docId, viewerId],
   );
   return rows.map(toAgentAnnotation);
+}
+
+/**
+ * Switches a whole run between `private` and `org` — the run, not the
+ * single annotation, is the unit of sharing (docs/02-decisions.md #5).
+ * Only the run's owner can do this; org-lens runs have no owner and are
+ * always `org`. Returns the number of annotations changed (0 = not found or
+ * not the owner).
+ */
+export async function setAgentRunVisibility(
+  runId: string,
+  ownerId: string,
+  visibility: Visibility,
+): Promise<number> {
+  const [result] = await pool.query<ResultSetHeader>(
+    "UPDATE agent_annotations SET visibility = ? WHERE run_id = ? AND owner_id = ?",
+    [visibility, runId, ownerId],
+  );
+  return result.affectedRows;
+}
+
+export async function findAgentRunOwner(runId: string): Promise<{ docId: string; ownerId: string | null } | null> {
+  const [rows] = await pool.query<AgentAnnotationRow[]>(
+    "SELECT doc_id, owner_id FROM agent_annotations WHERE run_id = ? LIMIT 1",
+    [runId],
+  );
+  return rows[0] ? { docId: rows[0].doc_id, ownerId: rows[0].owner_id } : null;
 }
 
 interface UserRow extends RowDataPacket {
@@ -500,10 +538,11 @@ export async function findHumanAnnotationById(id: string): Promise<HumanAnnotati
   return rows[0] ? toHumanAnnotation(rows[0]) : null;
 }
 
-export async function listHumanAnnotationsForDoc(docId: string): Promise<HumanAnnotation[]> {
+/** Excludes soft-deleted rows and other users' `private` annotations (docs/02-decisions.md #5). */
+export async function listHumanAnnotationsForDoc(docId: string, viewerId: string): Promise<HumanAnnotation[]> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    "SELECT * FROM human_annotations WHERE doc_id = ? AND deleted_at IS NULL ORDER BY created_at ASC",
-    [docId],
+    "SELECT * FROM human_annotations WHERE doc_id = ? AND deleted_at IS NULL AND (visibility = 'org' OR author_id = ?) ORDER BY created_at ASC",
+    [docId, viewerId],
   );
   return rows.map(toHumanAnnotation);
 }

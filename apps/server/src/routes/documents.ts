@@ -21,6 +21,8 @@ import {
   listLensRunsForDocument,
   listNodesForDocument,
   recordLensRun,
+  setAgentRunVisibility,
+  findAgentRunOwner,
 } from "../db/repositories.js";
 import { broadcastAnnotationsChanged } from "../realtime/socket.js";
 
@@ -42,7 +44,7 @@ const upload = multer({
   },
 });
 
-documentsRouter.post("/documents", upload.single("file"), async (req, res, next) => {
+documentsRouter.post("/documents", requireAuth, upload.single("file"), async (req, res, next) => {
   try {
     if (!req.file) {
       res.status(400).json({ error: "Missing file field 'file'" });
@@ -83,7 +85,7 @@ documentsRouter.post("/documents", upload.single("file"), async (req, res, next)
   }
 });
 
-documentsRouter.get("/documents", async (_req, res, next) => {
+documentsRouter.get("/documents", requireAuth, async (_req, res, next) => {
   try {
     res.json({ documents: await listDocuments() });
   } catch (err) {
@@ -91,7 +93,7 @@ documentsRouter.get("/documents", async (_req, res, next) => {
   }
 });
 
-documentsRouter.get("/documents/:id", async (req, res, next) => {
+documentsRouter.get("/documents/:id", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
@@ -104,7 +106,7 @@ documentsRouter.get("/documents/:id", async (req, res, next) => {
   }
 });
 
-documentsRouter.get("/documents/:id/charmap", async (req, res, next) => {
+documentsRouter.get("/documents/:id/charmap", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
@@ -118,7 +120,7 @@ documentsRouter.get("/documents/:id/charmap", async (req, res, next) => {
   }
 });
 
-documentsRouter.get("/documents/:id/file", async (req, res, next) => {
+documentsRouter.get("/documents/:id/file", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
@@ -133,7 +135,7 @@ documentsRouter.get("/documents/:id/file", async (req, res, next) => {
   }
 });
 
-documentsRouter.get("/documents/:id/nodes", async (req, res, next) => {
+documentsRouter.get("/documents/:id/nodes", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
@@ -146,14 +148,14 @@ documentsRouter.get("/documents/:id/nodes", async (req, res, next) => {
   }
 });
 
-documentsRouter.get("/documents/:id/lens-runs", async (req, res, next) => {
+documentsRouter.get("/documents/:id/lens-runs", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
       res.status(404).json({ error: "Document not found" });
       return;
     }
-    res.json({ lensRuns: await listLensRunsForDocument(req.params.id) });
+    res.json({ lensRuns: await listLensRunsForDocument(req.params.id, req.user!.id) });
   } catch (err) {
     next(err);
   }
@@ -211,7 +213,7 @@ documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (re
   }
 });
 
-documentsRouter.get("/documents/:id/annotations", async (req, res, next) => {
+documentsRouter.get("/documents/:id/annotations", requireAuth, async (req, res, next) => {
   try {
     const document = await findDocumentById(req.params.id);
     if (!document) {
@@ -219,10 +221,39 @@ documentsRouter.get("/documents/:id/annotations", async (req, res, next) => {
       return;
     }
     const [agentAnnotations, humanAnnotations] = await Promise.all([
-      listAgentAnnotationsForDoc(req.params.id),
-      listHumanAnnotationsForDoc(req.params.id),
+      listAgentAnnotationsForDoc(req.params.id, req.user!.id),
+      listHumanAnnotationsForDoc(req.params.id, req.user!.id),
     ]);
     res.json({ annotations: [...agentAnnotations, ...humanAnnotations] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/**
+ * Toggles one of the caller's own personal-lens runs between `private` and
+ * `org` as a whole (docs/02-decisions.md #5: the run is the unit of
+ * sharing). Org-lens runs have no owner and can't be toggled.
+ */
+documentsRouter.patch("/documents/:id/runs/:runId/visibility", requireAuth, async (req, res, next) => {
+  try {
+    const { visibility } = req.body as { visibility?: unknown };
+    if (visibility !== "private" && visibility !== "org") {
+      res.status(400).json({ error: "visibility must be 'private' or 'org'" });
+      return;
+    }
+    const run = await findAgentRunOwner(req.params.runId);
+    if (!run || run.docId !== req.params.id) {
+      res.status(404).json({ error: "Run not found" });
+      return;
+    }
+    if (run.ownerId !== req.user!.id) {
+      res.status(403).json({ error: "Only the run's owner can change its visibility" });
+      return;
+    }
+    await setAgentRunVisibility(req.params.runId, req.user!.id, visibility);
+    broadcastAnnotationsChanged(req.params.id);
+    res.json({ runId: req.params.runId, visibility });
   } catch (err) {
     next(err);
   }

@@ -46,6 +46,8 @@ export interface AgentAnnotation {
   agentVersion: string;
   /** Groups all annotations produced by one execution of one agent version. Rerunning an agent produces a new runId, never mutates a previous run (docs/01 "重跑与版本管理"). */
   runId: string;
+  /** User who produced this run with a personal lens; null for org-lens runs. A `private` run is visible only to its owner (docs/02-decisions.md #5). */
+  ownerId: string | null;
   anchor: Anchor;
   /**
    * The exact source-text span the agent claims supports `comment`.

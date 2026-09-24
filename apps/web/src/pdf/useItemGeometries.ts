@@ -31,7 +31,7 @@ export function useItemGeometries(fileUrl: string | null): PageGeometries | null
     let doc: pdfjsLib.PDFDocumentProxy | null = null;
 
     async function run() {
-      const loaded = await pdfjsLib.getDocument(fileUrl!).promise;
+      const loaded = await pdfjsLib.getDocument({ url: fileUrl!, withCredentials: true }).promise;
       doc = loaded;
       if (cancelled) return;
 

@@ -14,7 +14,7 @@ export function useDocumentSocket(docId: string | null, onAnnotationsChanged: ()
   useEffect(() => {
     if (!docId) return;
 
-    const socket = io(SOCKET_BASE);
+    const socket = io(SOCKET_BASE, { withCredentials: true });
     socket.emit("join", docId);
     socket.on("annotations:changed", onAnnotationsChanged);
 

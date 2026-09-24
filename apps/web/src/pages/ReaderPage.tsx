@@ -85,6 +85,8 @@ export function ReaderPage() {
   useDocumentSocket(docId, reloadAnnotations);
 
   const fileUrl = documentFileUrl(docId);
+  // The file route requires the session cookie; memoized so PdfLoader doesn't see a new object (and reload the PDF) every render.
+  const pdfSource = useMemo(() => ({ url: fileUrl, withCredentials: true }), [fileUrl]);
   const geometries = useItemGeometries(fileUrl);
   const currentPage = useCurrentPage(pdfContainerRef, scale);
 
@@ -297,7 +299,7 @@ export function ReaderPage() {
               </div>
             )}
             <PdfLoader
-              document={fileUrl}
+              document={pdfSource}
               workerSrc={workerUrl}
               beforeLoad={(progress) => (
                 <div style={{ padding: 24 }}>Loading PDF… {Math.floor((progress.loaded / progress.total) * 100)}%</div>
