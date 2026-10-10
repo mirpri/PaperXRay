@@ -8,6 +8,9 @@ import type {
   LensOutputItem,
   LensSpec,
   Node as IrNode,
+  ModelProvider,
+  NotificationPage,
+  ProviderDraft,
   Role,
   SsoConfigPublic,
   User,
@@ -30,16 +33,48 @@ export function loginUrl(): string {
   return `${API_BASE}/auth/login`;
 }
 
-export async function uploadDocument(file: File): Promise<Document> {
+export type UploadProgress =
+  | { phase: "uploading"; percent: number | null }
+  | { phase: "processing" };
+
+export function uploadDocument(file: File, onProgress?: (progress: UploadProgress) => void): Promise<Document> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API_BASE}/documents`, { method: "POST", body: form, credentials: "include" });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Upload failed: ${res.status}`);
-  }
-  const body = (await res.json()) as { document: Document };
-  return body.document;
+  return new Promise((resolve, reject) => {
+    // Fetch does not expose upload progress; XHR reports actual bytes sent.
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${API_BASE}/documents`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (event) => {
+      onProgress?.({
+        phase: "uploading",
+        percent: event.lengthComputable && event.total > 0
+          ? Math.min(99, Math.floor((event.loaded / event.total) * 100))
+          : null,
+      });
+    };
+    xhr.upload.onload = () => onProgress?.({ phase: "processing" });
+    xhr.onload = () => {
+      let body: { document?: Document; error?: string };
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        reject(new Error(`Upload failed: ${xhr.status}`));
+        return;
+      }
+      if (xhr.status < 200 || xhr.status >= 300) {
+        reject(new Error(body.error ?? `Upload failed: ${xhr.status}`));
+      } else if (!body.document) {
+        reject(new Error("Upload failed: invalid server response"));
+      } else {
+        resolve(body.document);
+      }
+    };
+    xhr.onerror = () => reject(new Error("Upload failed: network error"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.ontimeout = () => reject(new Error("Upload timed out"));
+    xhr.send(form);
+  });
 }
 
 /** Server fetches the PDF itself (arXiv /abs/ links are canonicalized to the PDF), under its host allowlist + SSRF policy. */
@@ -171,9 +206,21 @@ export async function setUserRole(userId: string, role: Role): Promise<User> {
   return (await jsonOrThrow<{ user: User }>(res, "Failed to change role")).user;
 }
 
+export const ACCOUNT_MANAGEMENT_URL_CHANGED = "pxr:account-management-url-changed";
+export async function fetchAccountManagementUrl(): Promise<string | null> {
+  const res = await fetch(`${API_BASE}/auth/account-management`, { credentials: "include", cache: "no-store" });
+  return (await jsonOrThrow<{ accountManagementUrl: string | null }>(res, "Failed to load account management link")).accountManagementUrl;
+}
+
 export async function fetchSsoConfig(): Promise<SsoConfigPublic> {
   const res = await fetch(`${API_BASE}/admin/sso-config`, { credentials: "include" });
   return (await jsonOrThrow<{ ssoConfig: SsoConfigPublic }>(res, "Failed to load SSO settings")).ssoConfig;
+}
+
+export async function exportSsoConfigJson(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin/sso-config/export`, { credentials: "include", cache: "no-store" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to export SSO settings");
+  return res.blob();
 }
 
 /** `clientSecret`: a string sets it, null clears it, undefined leaves it unchanged (it's write-only). */
@@ -181,7 +228,11 @@ export async function saveSsoConfig(
   config: Omit<SsoConfigPublic, "hasClientSecret"> & { clientSecret?: string | null },
 ): Promise<SsoConfigPublic> {
   const res = await sendJson("PUT", "/admin/sso-config", config);
-  return (await jsonOrThrow<{ ssoConfig: SsoConfigPublic }>(res, "Failed to save SSO settings")).ssoConfig;
+  const saved = (await jsonOrThrow<{ ssoConfig: SsoConfigPublic }>(res, "Failed to save SSO settings")).ssoConfig;
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(ACCOUNT_MANAGEMENT_URL_CHANGED, { detail: saved.accountManagementUrl ?? null }));
+  }
+  return saved;
 }
 
 /** Runs an org lens on the server. */
@@ -228,4 +279,50 @@ export async function fetchMe(): Promise<User | null> {
 
 export async function logout(): Promise<void> {
   await fetch(`${API_BASE}/auth/logout`, { method: "POST", credentials: "include" });
+}
+
+export async function fetchProviders(): Promise<ModelProvider[]> {
+  const res = await fetch(`${API_BASE}/providers`, { credentials: "include" });
+  return (await jsonOrThrow<{ providers: ModelProvider[] }>(res, "Failed to load providers")).providers;
+}
+export async function saveProvider(id: string | null, draft: ProviderDraft, org: boolean): Promise<ModelProvider> {
+  const res = await sendJson(id ? "PUT" : "POST", id ? `/providers/${encodeURIComponent(id)}` : "/providers", { ...draft, org });
+  return (await jsonOrThrow<{ provider: ModelProvider }>(res, "Failed to save provider")).provider;
+}
+export async function deleteProvider(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/providers/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to delete provider");
+}
+
+export async function updateComment(docId: string, id: string, body: string, version: number): Promise<void> {
+  await jsonOrThrow(await sendJson("PATCH", `/documents/${docId}/human-annotations/${id}`, { body, version }), "Failed to edit comment");
+}
+export async function deleteComment(docId: string, id: string, version: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/documents/${docId}/human-annotations/${id}?version=${version}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to delete comment");
+}
+export async function replyToComment(docId: string, id: string, parentKind: "human" | "agent", body: string): Promise<void> {
+  await jsonOrThrow(await sendJson("POST", `/documents/${docId}/annotations/${id}/replies`, { body, parentKind }), "Failed to reply");
+}
+
+export async function fetchNotifications(before?: string): Promise<NotificationPage> {
+  const suffix = before ? `?before=${encodeURIComponent(before)}` : "";
+  return jsonOrThrow<NotificationPage>(await fetch(`${API_BASE}/notifications${suffix}`, { credentials: "include" }), "Failed to load messages");
+}
+export async function fetchUnreadNotificationCount(): Promise<number> {
+  const body = await jsonOrThrow<{ unreadCount: number }>(await fetch(`${API_BASE}/notifications/unread-count`, { credentials: "include" }), "Failed to load unread count");
+  return body.unreadCount;
+}
+export async function markMessageRead(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/notifications/${encodeURIComponent(id)}/read`, { method: "PATCH", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to mark message read");
+}
+export async function markAllMessagesRead(): Promise<void> {
+  const res = await fetch(`${API_BASE}/notifications/read-all`, { method: "POST", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to mark messages read");
+}
+
+export async function voteOnAnnotation(docId: string, id: string, kind: "human" | "agent", value: -1 | 0 | 1): Promise<import("@paper-xray/contracts").AnnotationVotes> {
+  const result = await jsonOrThrow<{ votes: import("@paper-xray/contracts").AnnotationVotes }>(await sendJson("PUT", `/documents/${docId}/annotations/${id}/vote`, { kind, value }), "Failed to vote");
+  return result.votes;
 }

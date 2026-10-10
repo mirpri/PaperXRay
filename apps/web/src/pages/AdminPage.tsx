@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Role, SsoConfigPublic, User } from "@paper-xray/contracts";
-import { fetchSsoConfig, fetchUsers, saveSsoConfig, setUserRole } from "../api";
+import { exportSsoConfigJson, fetchSsoConfig, fetchUsers, saveSsoConfig, setUserRole } from "../api";
 import { useAuth } from "../auth/AuthContext";
+import { ProviderSettings } from "../components/ProviderSettings";
+import { MAX_SSO_JSON_BYTES, parseSsoConfigJson } from "./sso-config-json";
 import { Header } from "../components/Header";
 
 const ROLES: Role[] = ["member", "curator", "admin"];
@@ -19,6 +21,7 @@ const SSO_FIELDS: Array<[keyof Omit<SsoConfigPublic, "hasClientSecret">, string]
   ["userinfoEndpoint", "USERINFO ENDPOINT"],
   ["clientId", "CLIENT ID"],
   ["scopes", "SCOPES"],
+  ["accountManagementUrl", "ACCOUNT MANAGEMENT URL"],
 ];
 
 /** Admin panel: roles (docs/02-decisions.md #4) and the org's OAuth2 SSO settings (#11). */
@@ -28,6 +31,8 @@ export function AdminPage() {
   const [sso, setSso] = useState<SsoConfigPublic | null>(null);
   const [newSecret, setNewSecret] = useState("");
   const [clearSecret, setClearSecret] = useState(false);
+  const [ssoBusy, setSsoBusy] = useState(false);
+  const ssoFileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -39,10 +44,12 @@ export function AdminPage() {
 
   if (me?.role !== "admin") {
     return (
-      <div style={{ minHeight: "100svh", background: "var(--bg)" }}>
+      <div className="pxr-settings-page">
         <Header />
-        <main style={{ maxWidth: 880, margin: "0 auto", padding: "32px 24px", fontSize: 13 }}>
-          Only admins can open this page. <Link to="/">Back to the library</Link>
+        <main className="pxr-admin-main pxr-settings-scroll">
+          <div className="pxr-admin-content">
+            <ProviderSettings />
+          </div>
         </main>
       </div>
     );
@@ -60,9 +67,39 @@ export function AdminPage() {
     }
   }
 
+  async function importSso(file: File) {
+    if (ssoBusy) return;
+    setSsoBusy(true); setError(null); setNotice(null);
+    try {
+      if (file.size > MAX_SSO_JSON_BYTES) throw new Error("SSO JSON must be 64 KB or smaller.");
+      const { clientSecret, ...fields } = parseSsoConfigJson(await file.text());
+      setSso({ ...fields, accountManagementUrl: fields.accountManagementUrl ?? "", hasClientSecret: sso?.hasClientSecret ?? false });
+      setNewSecret(clientSecret ?? "");
+      setClearSecret(clientSecret === null || clientSecret === "");
+      setNotice("JSON imported. Save SSO settings to apply.");
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setSsoBusy(false); }
+  }
+
+  async function exportSso() {
+    if (ssoBusy) return;
+    setSsoBusy(true); setError(null); setNotice(null);
+    try {
+      const blob = await exportSsoConfigJson();
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url; link.download = "sso-config.json";
+        document.body.appendChild(link); link.click(); link.remove();
+      } finally { window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setSsoBusy(false); }
+  }
+
   async function submitSso(e: React.FormEvent) {
     e.preventDefault();
-    if (!sso) return;
+    if (!sso || ssoBusy) return;
+    setSsoBusy(true);
     setError(null);
     setNotice(null);
     try {
@@ -77,11 +114,11 @@ export function AdminPage() {
       setNotice("SSO settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
-    }
+    } finally { setSsoBusy(false); }
   }
 
   return (
-    <div style={{ minHeight: "100svh", background: "var(--bg)" }}>
+    <div className="pxr-settings-page">
       <Header
         left={
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -93,9 +130,12 @@ export function AdminPage() {
           </div>
         }
       />
-      <main style={{ maxWidth: 880, margin: "0 auto", padding: "28px 24px", display: "flex", flexDirection: "column", gap: 32 }}>
+      <main className="pxr-admin-main pxr-settings-scroll">
+        <div className="pxr-admin-content">
         {error && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{error}</p>}
         {notice && <p style={{ color: "var(--human)", fontSize: 13, margin: 0 }}>{notice}</p>}
+
+        <ProviderSettings />
 
         <section>
           <h2 className="pxr-section-title">USERS & ROLES</h2>
@@ -148,15 +188,26 @@ export function AdminPage() {
         </section>
 
         <section>
-          <h2 className="pxr-section-title">SINGLE SIGN-ON (OAUTH 2.0 + PKCE)</h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+            <h2 className="pxr-section-title" style={{ margin: 0 }}>SINGLE SIGN-ON (OAUTH 2.0 + PKCE)</h2>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input ref={ssoFileInput} type="file" accept=".json,application/json" hidden aria-label="Import SSO JSON" onChange={e => {
+                const file = e.currentTarget.files?.[0]; e.currentTarget.value = "";
+                if (file) void importSso(file);
+              }} />
+              <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => ssoFileInput.current?.click()}>Import JSON</button>
+              <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => void exportSso()}>Export JSON</button>
+            </div>
+          </div>
+          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>Export downloads the saved settings, including the client secret. Imported settings take effect after saving.</p>
           {sso === null ? (
             <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
           ) : (
-            <form onSubmit={submitSso} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
+            <form onSubmit={submitSso} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 12 }}>
               {SSO_FIELDS.map(([key, label]) => (
                 <div key={key}>
                   <label className="pxr-label" htmlFor={`sso-${key}`}>{label}</label>
-                  <input id={`sso-${key}`} className="pxr-input" value={sso[key]} onChange={(e) => setSso({ ...sso, [key]: e.target.value })} />
+                  <input id={`sso-${key}`} className="pxr-input" disabled={ssoBusy} value={sso[key] ?? ""} onChange={(e) => setSso({ ...sso, [key]: e.target.value })} />
                 </div>
               ))}
               <div>
@@ -169,25 +220,26 @@ export function AdminPage() {
                   type="password"
                   autoComplete="off"
                   value={newSecret}
-                  disabled={clearSecret}
+                  disabled={clearSecret || ssoBusy}
                   onChange={(e) => setNewSecret(e.target.value)}
                   placeholder={sso.hasClientSecret ? "Leave empty to keep the current secret" : "Optional"}
                 />
                 {sso.hasClientSecret && (
                   <label className="pxr-check" style={{ marginTop: 6 }}>
-                    <input type="checkbox" checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} />
+                    <input type="checkbox" disabled={ssoBusy} checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} />
                     Remove the stored secret
                   </label>
                 )}
               </div>
               <div style={{ gridColumn: "1 / -1" }}>
-                <button type="submit" className="pxr-btn pxr-btn-primary">
+                <button type="submit" className="pxr-btn pxr-btn-primary" disabled={ssoBusy}>
                   Save SSO settings
                 </button>
               </div>
             </form>
           )}
         </section>
+        </div>
       </main>
     </div>
   );

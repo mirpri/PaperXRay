@@ -13,25 +13,25 @@ import type {
   User,
   Visibility,
 } from "@paper-xray/contracts";
+import { lensColor } from "@paper-xray/contracts";
 import { pool } from "./pool.js";
+import { readCharMap, readNormalizedText, writeDocumentContent } from "../storage/document-files.js";
 
 interface DocumentRow extends RowDataPacket {
   id: string;
   content_hash: string;
   original_filename: string | null;
   page_count: number;
-  normalized_text: string;
-  char_map: string | null;
   created_at: Date;
 }
 
-function toDocument(row: DocumentRow): Document {
+async function toDocument(row: DocumentRow): Promise<Document> {
   return {
     id: row.id,
     contentHash: row.content_hash,
     originalFilename: row.original_filename,
     pageCount: row.page_count,
-    normalizedText: row.normalized_text,
+    normalizedText: await readNormalizedText(row.content_hash),
     createdAt: row.created_at.toISOString(),
   };
 }
@@ -46,7 +46,7 @@ function toDocumentSummary(row: DocumentRow): DocumentSummary {
   };
 }
 
-/** Library page projection — every column except normalized_text/char_map, which a list view never needs and which can be large. */
+/** Library listing reads metadata only; full text and CharMap live in file storage. */
 export async function listDocuments(): Promise<DocumentSummary[]> {
   const [rows] = await pool.query<DocumentRow[]>(
     "SELECT id, content_hash, original_filename, page_count, created_at FROM documents ORDER BY created_at DESC",
@@ -58,7 +58,7 @@ export async function findDocumentByContentHash(
   contentHash: string,
 ): Promise<Document | null> {
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT * FROM documents WHERE content_hash = ? LIMIT 1",
+    "SELECT id, content_hash, original_filename, page_count, created_at FROM documents WHERE content_hash = ? LIMIT 1",
     [contentHash],
   );
   return rows[0] ? toDocument(rows[0]) : null;
@@ -66,7 +66,7 @@ export async function findDocumentByContentHash(
 
 export async function findDocumentById(id: string): Promise<Document | null> {
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT * FROM documents WHERE id = ? LIMIT 1",
+    "SELECT id, content_hash, original_filename, page_count, created_at FROM documents WHERE id = ? LIMIT 1",
     [id],
   );
   return rows[0] ? toDocument(rows[0]) : null;
@@ -151,12 +151,12 @@ export async function listLensRunsForDocument(docId: string, viewerId: string): 
 /** Separate from findDocumentById since most callers (evidence checks, annotation listing) never need the CharMap — it's only for reverse-mapping (client-side highlight rendering). */
 export async function getCharMapForDocument(id: string): Promise<CharMap | null> {
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT char_map FROM documents WHERE id = ? LIMIT 1",
+    "SELECT content_hash FROM documents WHERE id = ? LIMIT 1",
     [id],
   );
   const row = rows[0];
-  if (!row || row.char_map === null) return null;
-  return JSON.parse(row.char_map) as CharMap;
+  if (!row) return null;
+  return readCharMap(row.content_hash);
 }
 
 /** Creates the document and its IR Node tree (as produced by the reassembly layer, see ../reassembly/build-document.ts) in one transaction. Node ids/charRanges are already computed by the caller — this just persists them. */
@@ -169,35 +169,31 @@ export async function createDocumentWithNodes(params: {
   nodes: IrNode[];
 }): Promise<{ document: Document }> {
   const docId = uuid();
+  // Persist large artifacts before acquiring database locks. On a failed DB
+  // transaction the content-addressed files are retained for a safe retry.
+  await writeDocumentContent(params.contentHash, params.normalizedText, params.charMap);
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     await conn.query(
-      "INSERT INTO documents (id, content_hash, original_filename, page_count, normalized_text, char_map) VALUES (?, ?, ?, ?, ?, ?)",
+      "INSERT INTO documents (id, content_hash, original_filename, page_count) VALUES (?, ?, ?, ?)",
       [
         docId,
         params.contentHash,
         params.originalFilename,
         params.pageCount,
-        params.normalizedText,
-        JSON.stringify(params.charMap),
       ],
     );
-    for (const node of params.nodes) {
+    // Bound packet size and avoid one network round-trip per paragraph.
+    for (let offset = 0; offset < params.nodes.length; offset += 250) {
+      const values = params.nodes.slice(offset, offset + 250).map((node) => [
+        node.id, docId, node.type, node.parentId, node.order,
+        node.charRange.start, node.charRange.end, node.pageHint,
+      ]);
       await conn.query(
-        `INSERT INTO nodes (id, doc_id, type, parent_id, \`order\`, char_start, char_end, page_hint)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          node.id,
-          docId,
-          node.type,
-          node.parentId,
-          node.order,
-          node.charRange.start,
-          node.charRange.end,
-          node.pageHint,
-        ],
+        "INSERT INTO nodes (id, doc_id, type, parent_id, `order`, char_start, char_end, page_hint) VALUES ?",
+        [values],
       );
     }
     await conn.commit();
@@ -214,6 +210,9 @@ export async function createDocumentWithNodes(params: {
 }
 
 interface AgentAnnotationRow extends RowDataPacket {
+  lens_color?: string | null;
+  lens_name?: string | null;
+  owner_name?: string | null;
   id: string;
   doc_id: string;
   agent_id: string;
@@ -234,6 +233,9 @@ function toAgentAnnotation(row: AgentAnnotationRow): AgentAnnotation {
     id: row.id,
     docId: row.doc_id,
     agentId: row.agent_id,
+    lensColor: lensColor(row.agent_id, row.lens_color),
+    lensName: row.lens_name ?? undefined,
+    ownerName: row.owner_name ?? undefined,
     agentVersion: row.agent_version,
     runId: row.run_id,
     ownerId: row.owner_id,
@@ -292,7 +294,7 @@ export async function listAgentAnnotationsForDoc(
   viewerId: string,
 ): Promise<AgentAnnotation[]> {
   const [rows] = await pool.query<AgentAnnotationRow[]>(
-    "SELECT * FROM agent_annotations WHERE doc_id = ? AND (visibility = 'org' OR owner_id = ?) ORDER BY created_at ASC",
+    "SELECT a.*, l.color AS lens_color, l.name AS lens_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.doc_id = ? AND (a.visibility = 'org' OR a.owner_id = ?) ORDER BY a.created_at ASC",
     [docId, viewerId],
   );
   return rows.map(toAgentAnnotation);
@@ -430,6 +432,7 @@ interface SsoConfigRow extends RowDataPacket {
   client_id: string;
   client_secret: string | null;
   scopes: string | null;
+  account_management_url: string | null;
 }
 
 export interface SsoConfig {
@@ -440,6 +443,7 @@ export interface SsoConfig {
   clientId: string;
   clientSecret: string | null;
   scopes: string;
+  accountManagementUrl: string | null;
 }
 
 function toSsoConfigPublic(row: SsoConfigRow): SsoConfigPublic {
@@ -451,16 +455,17 @@ function toSsoConfigPublic(row: SsoConfigRow): SsoConfigPublic {
     clientId: row.client_id,
     scopes: row.scopes ?? "",
     hasClientSecret: row.client_secret !== null && row.client_secret !== "",
+    accountManagementUrl: row.account_management_url ?? undefined,
   };
 }
 
-/** Full config including client_secret, for server-internal use only (the OAuth callback's token exchange) — never send this shape to a client. */
+/** Full config for OAuth token exchange and the explicit admin JSON backup download. */
 export async function getSsoConfig(): Promise<SsoConfig> {
   const [rows] = await pool.query<SsoConfigRow[]>(
     "SELECT * FROM sso_config WHERE id = 'default' LIMIT 1",
   );
   const row = rows[0];
-  if (!row) throw new Error("sso_config row missing — did migrations run?");
+  if (!row) throw new Error("sso_config row missing — run pnpm db:install on an empty database");
   return {
     providerName: row.provider_name,
     authorizationEndpoint: row.authorization_endpoint,
@@ -469,6 +474,7 @@ export async function getSsoConfig(): Promise<SsoConfig> {
     clientId: row.client_id,
     clientSecret: row.client_secret,
     scopes: row.scopes ?? "",
+    accountManagementUrl: row.account_management_url ?? null,
   };
 }
 
@@ -478,8 +484,14 @@ export async function getSsoConfigPublic(): Promise<SsoConfigPublic> {
     "SELECT * FROM sso_config WHERE id = 'default' LIMIT 1",
   );
   const row = rows[0];
-  if (!row) throw new Error("sso_config row missing — did migrations run?");
+  if (!row) throw new Error("sso_config row missing — run pnpm db:install on an empty database");
   return toSsoConfigPublic(row);
+}
+
+/** The account menu needs only this link, without exposing the admin SSO configuration. */
+export async function getAccountManagementUrl(): Promise<string | null> {
+  const [rows] = await pool.query<RowDataPacket[]>("SELECT account_management_url FROM sso_config WHERE id = 'default' LIMIT 1");
+  return rows[0]?.account_management_url ?? null;
 }
 
 /**
@@ -513,11 +525,12 @@ export async function updateSsoConfig(params: {
   /** undefined = leave unchanged, null = clear, string = set. Mirrors the "never echo a secret back, but allow rotating it" pattern used for API keys elsewhere in this project. */
   clientSecret?: string | null;
   scopes: string;
+  accountManagementUrl?: string | null;
 }): Promise<SsoConfigPublic> {
   if (params.clientSecret === undefined) {
     await pool.query(
       `UPDATE sso_config SET provider_name = ?, authorization_endpoint = ?, token_endpoint = ?,
-        userinfo_endpoint = ?, client_id = ?, scopes = ? WHERE id = 'default'`,
+        userinfo_endpoint = ?, client_id = ?, scopes = ?, account_management_url = CASE WHEN ? THEN ? ELSE account_management_url END WHERE id = 'default'`,
       [
         params.providerName,
         params.authorizationEndpoint,
@@ -525,12 +538,14 @@ export async function updateSsoConfig(params: {
         params.userinfoEndpoint,
         params.clientId,
         params.scopes,
+        params.accountManagementUrl !== undefined,
+        params.accountManagementUrl ?? null,
       ],
     );
   } else {
     await pool.query(
       `UPDATE sso_config SET provider_name = ?, authorization_endpoint = ?, token_endpoint = ?,
-        userinfo_endpoint = ?, client_id = ?, client_secret = ?, scopes = ? WHERE id = 'default'`,
+        userinfo_endpoint = ?, client_id = ?, client_secret = ?, scopes = ?, account_management_url = CASE WHEN ? THEN ? ELSE account_management_url END WHERE id = 'default'`,
       [
         params.providerName,
         params.authorizationEndpoint,
@@ -539,6 +554,8 @@ export async function updateSsoConfig(params: {
         params.clientId,
         params.clientSecret,
         params.scopes,
+        params.accountManagementUrl !== undefined,
+        params.accountManagementUrl ?? null,
       ],
     );
   }
@@ -546,6 +563,12 @@ export async function updateSsoConfig(params: {
 }
 
 interface HumanAnnotationRow extends RowDataPacket {
+  author_name: string;
+  author_role: HumanAnnotation["authorRole"];
+  parent_id: string | null;
+  parent_kind: "human" | "agent" | null;
+  thread_root_id: string | null;
+  thread_root_kind: "human" | "agent" | null;
   id: string;
   doc_id: string;
   author_id: string;
@@ -560,49 +583,70 @@ interface HumanAnnotationRow extends RowDataPacket {
 
 function toHumanAnnotation(row: HumanAnnotationRow): HumanAnnotation {
   return {
-    id: row.id,
-    docId: row.doc_id,
-    authorId: row.author_id,
-    anchor: JSON.parse(row.anchor),
-    body: row.body,
-    visibility: row.visibility,
-    version: row.version,
-    createdAt: row.created_at.toISOString(),
-    updatedAt: row.updated_at.toISOString(),
+    id: row.id, docId: row.doc_id, authorId: row.author_id,
+    authorName: row.author_name, authorRole: row.author_role,
+    parentId: row.parent_id, parentKind: row.parent_kind,
+    threadRootId: row.thread_root_id, threadRootKind: row.thread_root_kind,
+    anchor: JSON.parse(row.anchor), body: row.deleted_at ? "" : row.body,
+    visibility: row.visibility, version: row.version,
+    createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
   };
 }
 
 export async function findHumanAnnotationById(id: string): Promise<HumanAnnotation | null> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    "SELECT * FROM human_annotations WHERE id = ? LIMIT 1",
-    [id],
+    "SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h JOIN users u ON u.id = h.author_id WHERE h.id = ? LIMIT 1", [id],
   );
   return rows[0] ? toHumanAnnotation(rows[0]) : null;
 }
 
-/** Excludes soft-deleted rows and other users' `private` annotations (docs/02-decisions.md #5). */
+export async function findAgentAnnotationById(id: string): Promise<AgentAnnotation | null> {
+  const [rows] = await pool.query<AgentAnnotationRow[]>("SELECT a.*, l.color AS lens_color, l.name AS lens_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.id = ? LIMIT 1", [id]);
+  return rows[0] ? toAgentAnnotation(rows[0]) : null;
+}
+
+/** Replies inherit access from the current root, including changes to agent-run sharing. */
 export async function listHumanAnnotationsForDoc(docId: string, viewerId: string): Promise<HumanAnnotation[]> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    "SELECT * FROM human_annotations WHERE doc_id = ? AND deleted_at IS NULL AND (visibility = 'org' OR author_id = ?) ORDER BY created_at ASC",
-    [docId, viewerId],
+    `SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h
+     JOIN users u ON u.id = h.author_id
+     LEFT JOIN human_annotations r ON h.thread_root_kind = 'human' AND r.id = h.thread_root_id AND r.doc_id = h.doc_id
+     LEFT JOIN agent_annotations a ON h.thread_root_kind = 'agent' AND a.id = h.thread_root_id AND a.doc_id = h.doc_id
+     WHERE h.doc_id = ? AND (
+       (h.parent_id IS NULL AND (h.visibility = 'org' OR h.author_id = ?)) OR
+       (h.parent_id IS NOT NULL AND ((r.id IS NOT NULL AND (r.visibility = 'org' OR r.author_id = ?)) OR
+         (a.id IS NOT NULL AND (a.visibility = 'org' OR a.owner_id = ?))))
+     ) ORDER BY h.created_at ASC, h.id ASC`,
+    [docId, viewerId, viewerId, viewerId],
   );
   return rows.map(toHumanAnnotation);
 }
 
 export async function insertHumanAnnotation(params: {
-  docId: string;
-  authorId: string;
-  anchor: Anchor;
-  body: string;
-  visibility: Visibility;
+  docId: string; authorId: string; anchor: Anchor; body: string; visibility: Visibility;
+  parentId?: string; parentKind?: "human" | "agent";
+  threadRootId?: string; threadRootKind?: "human" | "agent";
+  notifyRecipientId?: string;
 }): Promise<HumanAnnotation> {
   const id = uuid();
-  await pool.query(
-    `INSERT INTO human_annotations (id, doc_id, author_id, anchor, body, visibility, version)
-     VALUES (?, ?, ?, ?, ?, ?, 1)`,
-    [id, params.docId, params.authorId, JSON.stringify(params.anchor), params.body, params.visibility],
-  );
+  const sql =
+    `INSERT INTO human_annotations (id, doc_id, author_id, anchor, body, visibility, version, parent_id, parent_kind, thread_root_id, thread_root_kind)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`;
+  const values = [id, params.docId, params.authorId, JSON.stringify(params.anchor), params.body, params.visibility,
+      params.parentId ?? null, params.parentKind ?? null, params.threadRootId ?? null, params.threadRootKind ?? null];
+
+  if (params.notifyRecipientId && params.notifyRecipientId !== params.authorId && params.parentId) {
+    const conn = await pool.getConnection();
+    try {
+      await conn.beginTransaction();
+      await conn.query(sql, values);
+      await conn.query("INSERT INTO notifications (id, recipient_id, actor_id, doc_id, reply_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
+        [uuid(), params.notifyRecipientId, params.authorId, params.docId, id, params.parentId]);
+      await conn.commit();
+    } catch (err) { await conn.rollback(); throw err; }
+    finally { conn.release(); }
+  } else await pool.query(sql, values);
   const created = await findHumanAnnotationById(id);
   if (!created) throw new Error("Failed to read back newly-inserted human annotation");
   return created;
@@ -637,10 +681,12 @@ export async function updateHumanAnnotationBody(
 export async function softDeleteHumanAnnotation(
   id: string,
   expectedVersion: number,
+  actorId: string,
+  actorRole: Role,
 ): Promise<OptimisticLockResult> {
   const [result] = await pool.query<ResultSetHeader>(
-    "UPDATE human_annotations SET deleted_at = NOW(3), version = version + 1 WHERE id = ? AND version = ? AND deleted_at IS NULL",
-    [id, expectedVersion],
+    "UPDATE human_annotations h JOIN users u ON u.id = h.author_id SET h.deleted_at = NOW(3), h.version = h.version + 1 WHERE h.id = ? AND h.version = ? AND h.deleted_at IS NULL AND (h.author_id = ? OR (? = 'admin' AND u.role <> 'admin'))",
+    [id, expectedVersion, actorId, actorRole],
   );
   const current = await findHumanAnnotationById(id);
   if (result.affectedRows === 0) {

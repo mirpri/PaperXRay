@@ -4,3 +4,7 @@ export * from "./annotation.js";
 export * from "./lens.js";
 export * from "./lens-output.js";
 export * from "./user.js";
+
+export * from "./lens-colors.js";
+
+export * from "./notification.js";

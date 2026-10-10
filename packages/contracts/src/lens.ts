@@ -24,6 +24,10 @@ export interface LensOutputSchema {
 
 export interface LensSpec {
   id: string;
+  providerId?: string | null;
+  model?: string | null;
+  /** Color from the shared 12-color palette. */
+  color?: string;
   name: string;
   description: string;
   version: string;
@@ -36,11 +40,10 @@ export interface LensSpec {
   /** Hard cap on annotations produced per run, to bound screen-flooding (docs "防刷屏"). */
   maxAnnotations: number;
   /**
-   * Org-owned lenses run server-side against an org-configured model
-   * endpoint. Personal lenses run client-side against the user's own
-   * endpoint/API key, which must never reach the server or database
-   * (docs/02-decisions.md #6). This field only records which case applies;
-   * it does not carry any credential.
+   * Organization providers execute on the server; personal providers execute
+   * in the owner's browser. A personal lens may select either type, while
+   * organization lenses select only organization providers. Personal API
+   * keys never reach the server. This field contains no credential.
    */
   executionContext: "org-server" | "personal-client";
   /** Owning user for a personal lens; null for org lenses (editable by curators). */
@@ -57,6 +60,10 @@ export interface LensSpec {
 
 /** The user-editable part of a LensSpec — id, version, owner and execution context are assigned by the server. */
 export interface LensDraft {
+  providerId?: string | null;
+  model?: string | null;
+  /** Color from the shared 12-color palette. */
+  color?: string;
   name: string;
   description: string;
   scope: LensScope;
@@ -76,3 +83,20 @@ export const DEFAULT_SEVERITIES: readonly Severity[] = [
   "medium",
   "high",
 ];
+
+/** Public provider metadata. Personal credentials remain in the owner's browser. */
+export interface ModelProvider {
+  id: string;
+  ownerId: string | null;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  hasApiKey: boolean;
+}
+export interface ProviderDraft {
+  name: string;
+  baseUrl: string;
+  models: string[];
+  /** Only organizational providers accept a server-side key. */
+  apiKey?: string | null;
+}

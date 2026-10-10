@@ -26,4 +26,12 @@ export interface SsoConfigPublic {
   clientId: string;
   scopes: string;
   hasClientSecret: boolean;
+  /** URL to the IdP's account management page (optional). */
+  accountManagementUrl?: string;
+}
+
+/** Explicit admin JSON backup/import format; may contain the client secret. */
+export interface SsoConfigTransfer extends Omit<SsoConfigPublic, "hasClientSecret" | "accountManagementUrl"> {
+  clientSecret?: string | null;
+  accountManagementUrl?: string | null;
 }

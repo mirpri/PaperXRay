@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@paper-xray/contracts": "workspace:*",
+    "lucide-react": "^1.53.0",
     "pdfjs-dist": "^4.9.155",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

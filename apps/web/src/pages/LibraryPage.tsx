@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { DocumentSummary } from "@paper-xray/contracts";
-import { fetchDocuments, importDocumentFromUrl, uploadDocument } from "../api";
+import { fetchDocuments, importDocumentFromUrl, uploadDocument, type UploadProgress } from "../api";
 import { Header } from "../components/Header";
 
 function titleFor(doc: DocumentSummary): string {
@@ -17,6 +17,7 @@ export function LibraryPage() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
   const [status, setStatus] = useState<"idle" | "uploading" | "importing" | "error">("idle");
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ phase: "uploading", percent: 0 });
   const [importUrl, setImportUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -30,13 +31,14 @@ export function LibraryPage() {
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || busy) return;
     e.target.value = "";
 
     setStatus("uploading");
+    setUploadProgress({ phase: "uploading", percent: 0 });
     setError(null);
     try {
-      const doc = await uploadDocument(file);
+      const doc = await uploadDocument(file, setUploadProgress);
       navigate(`/documents/${doc.id}`);
     } catch (err) {
       setStatus("error");
@@ -46,7 +48,7 @@ export function LibraryPage() {
 
   async function handleImport(e: React.FormEvent) {
     e.preventDefault();
-    if (!importUrl.trim()) return;
+    if (!importUrl.trim() || busy) return;
     setStatus("importing");
     setError(null);
     try {
@@ -59,6 +61,10 @@ export function LibraryPage() {
   }
 
   const busy = status === "uploading" || status === "importing";
+  const percent = status === "uploading" && uploadProgress.phase === "uploading" ? uploadProgress.percent : null;
+  const progressLabel = status === "importing"
+    ? "Importing PDF…"
+    : uploadProgress.phase === "processing" ? "Processing PDF…" : "Uploading PDF…";
 
   return (
     <div style={{ minHeight: "100svh", background: "var(--bg)" }}>
@@ -77,6 +83,8 @@ export function LibraryPage() {
               color: "#FFFFFF",
               background: "var(--text)",
               borderRadius: 3,
+              cursor: busy ? "default" : "pointer",
+              opacity: busy ? 0.6 : 1,
             }}
           >
             {status === "uploading" ? "Uploading…" : "＋ Upload PDF"}
@@ -125,6 +133,36 @@ export function LibraryPage() {
             {status === "importing" ? "Importing…" : "Import"}
           </button>
         </form>
+
+        {busy && (
+          <div className="pxr-transfer" aria-busy="true">
+            <div className="pxr-transfer-heading">
+              <span role="status">{progressLabel}</span>
+              {percent !== null && <span className="mono">{percent}%</span>}
+            </div>
+            <div
+              className="pxr-transfer-track"
+              role="progressbar"
+              aria-label={progressLabel}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={percent ?? undefined}
+              aria-valuetext={percent === null ? progressLabel : `${percent}% uploaded`}
+            >
+              <div
+                className={`pxr-transfer-fill${percent === null ? " pxr-transfer-indeterminate" : ""}`}
+                style={percent === null ? undefined : { width: `${percent}%` }}
+              />
+            </div>
+            <p className="pxr-transfer-hint">
+              {status === "importing"
+                ? "Downloading and processing the paper. This may take a moment."
+                : uploadProgress.phase === "processing"
+                  ? "Upload complete. Preparing your paper…"
+                  : "Sending your PDF…"}
+            </p>
+          </div>
+        )}
 
         {status === "error" && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
 

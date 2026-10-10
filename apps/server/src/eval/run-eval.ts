@@ -15,9 +15,12 @@ import path from "node:path";
 import type { LensOutputItem, LensSpec } from "@paper-xray/contracts";
 import { findEvidenceRange, sanitizeLensItems } from "@paper-xray/contracts";
 import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
+import { findLensModelConfig } from "../db/lens-model-config.js";
+import { findLensById } from "../db/lens-repository.js";
+import { pool } from "../db/pool.js";
 import { PRESET_LENSES } from "../lenses/presets.js";
 import { lensItemsToCandidates } from "../lenses/run-model-lens.js";
-import { callChatModel, isModelConfigured } from "../lenses/model-client.js";
+import { callChatModel } from "../lenses/model-client.js";
 import { buildLensSystemPrompt, buildLensUserMessage, parseLensModelOutput } from "@paper-xray/contracts";
 import { EVAL_DIR, listGoldenNames, loadGolden, readSnapshot, snapshotPath, type LoadedGolden } from "./golden.js";
 import { charMapCoverage, checkAnchor, matchSpans, readingOrderScore, sampleAnchors } from "./metrics.js";
@@ -33,14 +36,16 @@ function pct(n: number, d: number): string {
 }
 
 async function recordRuns(g: LoadedGolden): Promise<void> {
-  if (!isModelConfigured()) throw new Error("--record-runs needs PPIO_API_KEY (the org model endpoint)");
   const dir = path.join(EVAL_DIR, "runs", g.name);
   await mkdir(dir, { recursive: true });
-  for (const spec of PRESET_LENSES) {
+  for (const preset of PRESET_LENSES) {
+    const spec = await findLensById(preset.id);
+    const endpoint = await findLensModelConfig(preset.id);
+    if (!spec || !endpoint) throw new Error(`Configure ${preset.name} in the admin panel before --record-runs`);
     const raw = await callChatModel([
       { role: "system", content: buildLensSystemPrompt(spec) },
       { role: "user", content: buildLensUserMessage(g.normalizedText) },
-    ]);
+    ], endpoint);
     const items = parseLensModelOutput(raw, spec.maxAnnotations);
     await writeFile(
       path.join(dir, `${spec.id}.json`),
@@ -174,4 +179,4 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+try { await main(); } finally { await pool.end(); }

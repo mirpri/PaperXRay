@@ -8,7 +8,7 @@ import {
   parseLensModelOutput,
   sliceByCodePoints,
 } from "@paper-xray/contracts";
-import { callChatModel } from "./model-client.js";
+import { callChatModel, type ChatModelConfig } from "./model-client.js";
 
 const CONTEXT_CHARS = 32;
 
@@ -78,6 +78,7 @@ export async function runModelLens(params: {
   docId: string;
   normalizedText: string;
   nodes: IrNode[];
+  modelConfig: ChatModelConfig;
 }): Promise<AgentAnnotation[]> {
   const { spec, docId, normalizedText, nodes } = params;
   if (normalizedText.trim().length === 0) return [];
@@ -85,8 +86,8 @@ export async function runModelLens(params: {
   const raw = await callChatModel([
     { role: "system", content: buildLensSystemPrompt(spec) },
     { role: "user", content: buildLensUserMessage(normalizedText) },
-  ]);
+  ], params.modelConfig);
 
   const items = parseLensModelOutput(raw, spec.maxAnnotations);
-  return lensItemsToCandidates({ items, spec, docId, normalizedText, nodes, ownerId: null });
+  return lensItemsToCandidates({ items, spec, docId, normalizedText, nodes, ownerId: spec.ownerId });
 }

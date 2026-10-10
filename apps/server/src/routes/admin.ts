@@ -1,7 +1,8 @@
 import { Router, type Router as RouterType } from "express";
 import { requireRole } from "../auth/middleware.js";
 import type { Role } from "@paper-xray/contracts";
-import { getSsoConfigPublic, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
+import { getSsoConfig, getSsoConfigPublic, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
+
 
 const ROLES: readonly Role[] = ["admin", "curator", "member"];
 
@@ -10,8 +11,8 @@ export const adminRouter: RouterType = Router();
 /**
  * Admin-panel SSO settings (docs/02-decisions.md #11): lets an admin point
  * the whole app at a different standard OAuth2 IdP, or rotate mirpass
- * credentials, without a redeploy. clientSecret is write-only — GET never
- * returns it, only whether one is set.
+ * credentials, without a redeploy. Regular settings reads redact clientSecret;
+ * the explicit admin export includes credentials for backup and transfer.
  */
 adminRouter.get("/admin/sso-config", requireRole("admin"), async (_req, res, next) => {
   try {
@@ -19,6 +20,17 @@ adminRouter.get("/admin/sso-config", requireRole("admin"), async (_req, res, nex
   } catch (err) {
     next(err);
   }
+});
+
+/** Explicit backup download, separate from the redacted settings endpoint. */
+adminRouter.get("/admin/sso-config/export", requireRole("admin"), async (_req, res, next) => {
+  try {
+    const settings = await getSsoConfig();
+    res.set("Cache-Control", "no-store")
+      .set("Content-Disposition", 'attachment; filename="sso-config.json"')
+      .type("application/json")
+      .send(JSON.stringify(settings, null, 2) + "\n");
+  } catch (err) { next(err); }
 });
 
 adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next) => {
@@ -31,6 +43,7 @@ adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next
       clientId,
       clientSecret,
       scopes,
+      accountManagementUrl,
     } = req.body as {
       providerName?: unknown;
       authorizationEndpoint?: unknown;
@@ -39,6 +52,7 @@ adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next
       clientId?: unknown;
       clientSecret?: unknown;
       scopes?: unknown;
+      accountManagementUrl?: unknown;
     };
 
     if (
@@ -59,6 +73,19 @@ adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next
       return;
     }
 
+    if (accountManagementUrl !== undefined && accountManagementUrl !== null && typeof accountManagementUrl !== "string") {
+      res.status(400).json({ error: "accountManagementUrl must be a string, null, or omitted" }); return;
+    }
+    const accountUrl = typeof accountManagementUrl === "string" ? accountManagementUrl.trim() || null : accountManagementUrl;
+    if (accountUrl) {
+      try {
+        const parsed = new URL(accountUrl);
+        if (accountUrl.length > 512 || !["http:", "https:"].includes(parsed.protocol)) throw new Error("Invalid URL");
+      } catch {
+        res.status(400).json({ error: "accountManagementUrl must be an absolute HTTP or HTTPS URL (up to 512 characters)" }); return;
+      }
+    }
+
     const updated = await updateSsoConfig({
       providerName,
       authorizationEndpoint,
@@ -66,6 +93,7 @@ adminRouter.put("/admin/sso-config", requireRole("admin"), async (req, res, next
       userinfoEndpoint,
       clientId,
       clientSecret: clientSecret as string | null | undefined,
+      accountManagementUrl: accountUrl,
       scopes,
     });
     res.json({ ssoConfig: updated });

@@ -38,23 +38,11 @@ function human(id: string): HumanAnnotation {
 }
 
 describe("applyDisplayFilter", () => {
-  it("hides low-confidence agent annotations but never human ones", () => {
-    const result = applyDisplayFilter([agent("a", "L", 0.2), agent("b", "L", 0.9), human("h")], DEFAULT_DISPLAY_SETTINGS);
-    expect(result.visible.map((a) => a.id)).toEqual(["b", "h"]);
-    expect(result.hiddenByConfidence).toBe(1);
-  });
-
-  it("caps each lens separately, keeping the most severe then most confident, in original order", () => {
-    const list = [
-      agent("l1", "L", 0.6, "low"),
-      agent("l2", "L", 0.7, "high"),
-      agent("l3", "L", 0.9, "medium"),
-      agent("l4", "L", 0.8, "high"),
-      agent("m1", "M", 0.6),
-    ];
-    const result = applyDisplayFilter(list, { minConfidence: 0, perLensCap: 2, hiddenGroups: [] });
-    expect(result.visible.map((a) => a.id)).toEqual(["l2", "l4", "m1"]);
-    expect(result.hiddenByCap).toBe(2);
+  it("shows every qualifying annotation from a lens without a count limit", () => {
+    const list = Array.from({ length: 12 }, (_, i) => agent(`l${i}`, "L", 0.9));
+    list.push(agent("m1", "M", 0.9));
+    const result = applyDisplayFilter(list, DEFAULT_DISPLAY_SETTINGS);
+    expect(result.visible).toEqual(list);
   });
 
   it("switches whole groups off, including human notes", () => {
@@ -82,4 +70,11 @@ describe("pageDensity", () => {
       { page: 3, agent: 0, human: 0 },
     ]);
   });
+});
+
+it("keeps each Lens color in density statistics without duplicate counts", () => {
+  const at = (annotationId: string, color: string) => ({ annotationId, isAgent: true, color, position: { boundingRect: { pageNumber: 1 } } });
+  expect(pageDensity([at("a", "#168575"), at("a", "#168575"), at("b", "#8056AF")], 1)).toEqual([
+    { page: 1, agent: 2, human: 0, colors: { "#168575": 1, "#8056AF": 1 } },
+  ]);
 });

@@ -1,13 +1,8 @@
 import type { AgentAnnotation, LensSpec, Node as IrNode } from "@paper-xray/contracts";
 import { runModelLens } from "./run-model-lens.js";
-import { runFakeLens } from "./fake-lens.js";
-import { isModelConfigured } from "./model-client.js";
+import { findLensModelConfig } from "../db/lens-model-config.js";
 
-/**
- * Runs one org lens server-side (docs/02-decisions.md #6). Falls back to
- * the deterministic fake-lens when no org model endpoint is configured
- * (dev/CI without a PPIO key) instead of failing the request.
- */
+/** Runs a lens using its selected organization provider; ownership controls result visibility. */
 export async function runOrgLens(params: {
   spec: LensSpec;
   docId: string;
@@ -16,11 +11,11 @@ export async function runOrgLens(params: {
 }): Promise<AgentAnnotation[]> {
   const { spec, docId, normalizedText, nodes } = params;
   if (spec.executionContext !== "org-server") {
-    throw new Error("Personal lenses run in the browser, not on the server");
+    throw new Error("Lenses using personal providers run in the browser, not on the server");
   }
-  if (!isModelConfigured()) {
-    if (nodes.length === 0) return [];
-    return runFakeLens({ docId, normalizedText, anchorNodeId: nodes[0].id, lens: spec });
+  const modelConfig = await findLensModelConfig(spec.id);
+  if (!modelConfig) {
+    throw new Error("This organization lens has no model API configured. Ask an administrator to configure it in the admin panel.");
   }
-  return runModelLens({ spec, docId, normalizedText, nodes });
+  return runModelLens({ spec, docId, normalizedText, nodes, modelConfig });
 }

@@ -9,6 +9,9 @@ import { documentsRouter } from "./routes/documents.js";
 import { humanAnnotationsRouter } from "./routes/human-annotations.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter } from "./routes/admin.js";
+import { votesRouter } from "./routes/votes.js";
+import { notificationsRouter } from "./routes/notifications.js";
+import { providersRouter } from "./routes/providers.js";
 import { lensesRouter } from "./routes/lenses.js";
 import { initSocket } from "./realtime/socket.js";
 import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/repositories.js";
@@ -27,6 +30,9 @@ app.use("/api", humanAnnotationsRouter);
 app.use("/api", authRouter);
 app.use("/api", adminRouter);
 app.use("/api", lensesRouter);
+app.use("/api", providersRouter);
+app.use("/api", notificationsRouter);
+app.use("/api", votesRouter);
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   console.error(err);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
+import { pdfPathForHash, writePdf } from "../storage/document-files.js";
 import { Router, type Router as RouterType } from "express";
 import type { AgentAnnotation, Document, LensSpec, Node as IrNode } from "@paper-xray/contracts";
 import { sanitizeLensItems } from "@paper-xray/contracts";
@@ -30,11 +30,8 @@ import {
   setAgentRunVisibility,
   findAgentRunOwner,
 } from "../db/repositories.js";
+import { withVoteSummaries } from "../db/votes.js";
 import { broadcastAnnotationsChanged } from "../realtime/socket.js";
-
-function pdfPathForHash(contentHash: string): string {
-  return path.join(config.uploadsDir, `${contentHash}.pdf`);
-}
 
 export const documentsRouter: RouterType = Router();
 
@@ -63,6 +60,8 @@ async function ingestPdf(bytes: Buffer, originalFilename: string): Promise<{ doc
   // pdfjs-dist rejects Node's Buffer (a Uint8Array subclass) outright; needs a plain Uint8Array.
   const pages = await extractPages(new Uint8Array(bytes));
   const { normalizedText, charMap, nodes } = buildDocument(pages, contentHash);
+  // The database record becomes visible only after the PDF and parsed artifacts exist.
+  await writePdf(contentHash, bytes);
   const { document } = await createDocumentWithNodes({
     contentHash,
     originalFilename,
@@ -71,9 +70,6 @@ async function ingestPdf(bytes: Buffer, originalFilename: string): Promise<{ doc
     charMap,
     nodes,
   });
-
-  await mkdir(config.uploadsDir, { recursive: true });
-  await writeFile(pdfPathForHash(contentHash), bytes);
 
   // Lenses don't run automatically on ingest — each lens is triggered on
   // demand from the reader (its filter chip shows dashed until then), see
@@ -243,7 +239,7 @@ documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (re
       return;
     }
     const spec = await findLensById(req.params.lensId);
-    if (!spec || spec.ownerId !== null) {
+    if (!spec || (spec.ownerId !== null && spec.ownerId !== req.user!.id) || spec.executionContext !== "org-server") {
       res.status(404).json({ error: "Org lens not found" });
       return;
     }
@@ -258,7 +254,7 @@ documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (re
       return;
     }
 
-    const producedCount = await persistLensRun({ document, spec, nodes, candidates, ownerId: null });
+    const producedCount = await persistLensRun({ document, spec, nodes, candidates, ownerId: spec.ownerId });
     res.status(202).json({ producedCount, submittedCount: candidates.length });
   } catch (err) {
     next(err);
@@ -319,7 +315,7 @@ documentsRouter.get("/documents/:id/annotations", requireAuth, async (req, res, 
       listAgentAnnotationsForDoc(req.params.id, req.user!.id),
       listHumanAnnotationsForDoc(req.params.id, req.user!.id),
     ]);
-    res.json({ annotations: [...agentAnnotations, ...humanAnnotations] });
+    res.json({ annotations: await withVoteSummaries([...agentAnnotations, ...humanAnnotations], req.params.id, req.user!.id) });
   } catch (err) {
     next(err);
   }

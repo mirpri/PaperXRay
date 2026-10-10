@@ -1,17 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import type { LensDraft, LensScope, LensSpec } from "@paper-xray/contracts";
-import { LENS_SCOPES, MAX_ANNOTATIONS_LIMIT } from "@paper-xray/contracts";
-import { createLens, deleteLens, fetchLenses, updateLens } from "../api";
+import type { LensDraft, LensScope, LensSpec, ModelProvider } from "@paper-xray/contracts";
+import { LENS_SCOPES, MAX_ANNOTATIONS_LIMIT, LENS_COLORS, lensColor } from "@paper-xray/contracts";
+import { createLens, deleteLens, fetchLenses, fetchProviders, updateLens } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { Header } from "../components/Header";
-import {
-  clearPersonalModelSettings,
-  DEFAULT_PERSONAL_MODEL,
-  loadPersonalModelSettings,
-  savePersonalModelSettings,
-  type PersonalModelSettings,
-} from "../personal/model-settings";
 
 const SCOPE_LABELS: Record<LensScope, string> = {
   all: "Whole paper",
@@ -24,6 +17,7 @@ const SCOPE_LABELS: Record<LensScope, string> = {
 };
 
 const EMPTY_DRAFT: LensDraft = {
+  color: LENS_COLORS[0].value,
   name: "",
   description: "",
   scope: "all",
@@ -31,6 +25,7 @@ const EMPTY_DRAFT: LensDraft = {
   maxAnnotations: 6,
   strictScope: false,
   shareRunsWithOrg: false,
+  providerId: null, model: null,
 };
 
 /** Which lens the editor is showing: an existing one, or a new one (org or personal). */
@@ -38,6 +33,8 @@ type Selection = { kind: "existing"; id: string } | { kind: "new"; org: boolean 
 
 function draftFrom(spec: LensSpec): LensDraft {
   return {
+    providerId: spec.providerId ?? null, model: spec.model ?? null,
+    color: lensColor(spec.id, spec.color),
     name: spec.name,
     description: spec.description,
     scope: spec.scope,
@@ -55,6 +52,7 @@ function draftFrom(spec: LensSpec): LensDraft {
  */
 export function LensesPage() {
   const { user } = useAuth();
+  const editorRef = useRef<HTMLElement>(null);
   const canEditOrg = user?.role === "curator" || user?.role === "admin";
 
   const [lenses, setLenses] = useState<LensSpec[] | null>(null);
@@ -65,10 +63,10 @@ export function LensesPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const [model, setModel] = useState<PersonalModelSettings>(() => loadPersonalModelSettings() ?? DEFAULT_PERSONAL_MODEL);
-  const [modelSaved, setModelSaved] = useState(() => loadPersonalModelSettings() !== null);
+  const [providers, setProviders] = useState<ModelProvider[]>([]);
 
   useEffect(() => {
+    fetchProviders().then(setProviders).catch((err) => setError(String(err)));
     fetchLenses()
       .then(setLenses)
       .catch((err) => setError(String(err)));
@@ -83,6 +81,7 @@ export function LensesPage() {
   function select(next: Selection) {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
     setSelection(next);
+    editorRef.current?.scrollTo({ top: 0 });
     setError(null);
     setNotice(null);
     setDirty(false);
@@ -90,7 +89,8 @@ export function LensesPage() {
       const spec = lenses?.find((l) => l.id === next.id);
       if (spec) setDraft(draftFrom(spec));
     } else {
-      setDraft(EMPTY_DRAFT);
+      const used = new Set((lenses ?? []).map(l => lensColor(l.id, l.color)));
+      setDraft({ ...EMPTY_DRAFT, color: (LENS_COLORS.find(c => !used.has(c.value)) ?? LENS_COLORS[(lenses?.length ?? 0) % LENS_COLORS.length]).value });
     }
   }
 
@@ -133,19 +133,8 @@ export function LensesPage() {
     }
   }
 
-  function saveModel() {
-    savePersonalModelSettings(model);
-    setModelSaved(true);
-  }
-
-  function forgetModel() {
-    clearPersonalModelSettings();
-    setModel(DEFAULT_PERSONAL_MODEL);
-    setModelSaved(false);
-  }
-
   return (
-    <div style={{ minHeight: "100svh", background: "var(--bg)", display: "flex", flexDirection: "column" }}>
+    <div className="pxr-settings-page">
       <Header
         left={
           <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
@@ -158,19 +147,8 @@ export function LensesPage() {
         }
       />
 
-      <div style={{ flexGrow: 1, display: "flex", flexWrap: "wrap", minHeight: 0 }}>
-        <nav
-          style={{
-            width: 280,
-            flexShrink: 0,
-            padding: "18px 16px",
-            background: "var(--panel)",
-            borderRight: "1px solid var(--border)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 22,
-          }}
-        >
+      <div className="pxr-lenses-layout">
+        <nav className="pxr-lenses-nav pxr-settings-scroll" aria-label="Lens catalog">
           <LensList
             title="ORG LENSES"
             hint={canEditOrg ? "You can edit these" : "Maintained by curators"}
@@ -181,7 +159,7 @@ export function LensesPage() {
           />
           <LensList
             title="MY LENSES"
-            hint="Run in this browser"
+            hint="Your personal lenses"
             lenses={myLenses}
             selectedId={selection?.kind === "existing" ? selection.id : null}
             onSelect={(id) => select({ kind: "existing", id })}
@@ -190,7 +168,8 @@ export function LensesPage() {
           {lenses === null && <p style={{ fontSize: 12, color: "var(--text-muted)" }}>Loading…</p>}
         </nav>
 
-        <main style={{ flex: "1 1 480px", padding: "24px 28px", maxWidth: 760 }}>
+        <main ref={editorRef} className="pxr-lenses-main pxr-settings-scroll" aria-label="Lens configuration">
+          <div className="pxr-lenses-editor">
           {error && <p style={{ color: "crimson", fontSize: 13, marginTop: 0 }}>{error}</p>}
           {notice && <p style={{ color: "var(--human)", fontSize: 13, marginTop: 0 }}>{notice}</p>}
 
@@ -211,16 +190,52 @@ export function LensesPage() {
                   {selection.kind === "new" ? (isOrg ? "New org lens" : "New personal lens") : selected?.name}
                 </h1>
                 <p className="mono" style={{ fontSize: 10, color: "var(--text-muted)", margin: 0 }}>
-                  {isOrg ? "ORG · RUNS ON SERVER" : "PERSONAL · RUNS IN YOUR BROWSER"}
+                  {isOrg ? "ORG LENS" : "PERSONAL LENS"}
                   {selected && ` · v${selected.version}`}
                   {!readOnly && " · saving bumps the version; earlier annotations keep theirs"}
                 </p>
               </div>
 
-              <fieldset disabled={readOnly} style={{ border: 0, padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 16 }}>
+              <fieldset disabled={readOnly || saving} style={{ border: 0, padding: 0, margin: 0, display: "flex", flexDirection: "column", gap: 16 }}>
                 <div>
                   <label className="pxr-label" htmlFor="lens-name">NAME</label>
                   <input id="lens-name" className="pxr-input" value={draft.name} maxLength={120} required onChange={(e) => edit("name", e.target.value)} />
+                </div>
+                <div>
+                  <span className="pxr-label" id="lens-color-label">COLOR</span>
+                  <div role="group" aria-labelledby="lens-color-label" style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {LENS_COLORS.map(color => <button key={color.value} type="button"
+                      title={color.name} aria-label={color.name} aria-pressed={draft.color === color.value}
+                      onClick={() => edit("color", color.value)}
+                      style={{ width: 32, height: 32, borderRadius: 6, background: color.value, color: "#fff",
+                        border: "2px solid var(--surface)", outline: draft.color === color.value ? `2px solid ${color.value}` : "2px solid transparent", cursor: "pointer" }}>
+                      {draft.color === color.value ? "✓" : ""}
+                    </button>)}
+                  </div>
+                  <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "8px 0 0" }}>
+                    {LENS_COLORS.find(c => c.value === draft.color)?.name} · Used for labels, annotation cards and PDF highlights.
+                  </p>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(200px, 100%), 1fr))", gap: 12 }}>
+                  <div><label className="pxr-label" htmlFor="lens-provider">PROVIDER</label>
+                    <select id="lens-provider" className="pxr-input" value={draft.providerId ?? ""} onChange={(e) => {
+                      const provider = providers.find((p) => p.id === e.target.value);
+                      setDraft((d) => ({ ...d, providerId: provider?.id ?? null, model: provider?.models[0] ?? null })); setDirty(true);
+                    }}>
+                      <option value="">Select a provider</option>
+                      <optgroup label="Organization providers">{providers.filter((p) => p.ownerId === null).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>
+                      {!isOrg && <optgroup label="My providers">{providers.filter((p) => p.ownerId === user?.id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>}
+                    </select>
+                  </div>
+                  <div><label className="pxr-label" htmlFor="lens-model">MODEL</label>
+                    <input id="lens-model" className="pxr-input" list="lens-model-suggestions" disabled={!draft.providerId}
+                      required={Boolean(draft.providerId)} maxLength={255} placeholder="Select or enter a model"
+                      value={draft.model ?? ""} onChange={(e) => edit("model", e.target.value)} />
+                    <datalist id="lens-model-suggestions">
+                      {(providers.find((p) => p.id === draft.providerId)?.models ?? []).map((model) => <option key={model} value={model} />)}
+                    </datalist>
+                  </div>
+                  <Link to="/admin" style={{ fontSize: 12, gridColumn: "1 / -1" }}>Manage providers →</Link>
                 </div>
                 <div>
                   <label className="pxr-label" htmlFor="lens-description">DESCRIPTION</label>
@@ -310,47 +325,8 @@ export function LensesPage() {
             </form>
           )}
 
-          <section style={{ marginTop: 36, paddingTop: 20, borderTop: "1px solid var(--border)" }}>
-            <h2 className="pxr-section-title">MY MODEL ENDPOINT</h2>
-            <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px", maxWidth: 560 }}>
-              Personal lenses call this OpenAI-compatible endpoint straight from your browser. The URL and key are stored
-              only in this browser (localStorage) and are never sent to the Paper X-Ray server. Anyone with access to this
-              browser profile can read them. The endpoint must allow this site's origin (for Ollama, set OLLAMA_ORIGINS).
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 2fr) minmax(0, 1fr)", gap: 12, maxWidth: 640 }}>
-              <div>
-                <label className="pxr-label" htmlFor="model-url">BASE URL</label>
-                <input id="model-url" className="pxr-input" value={model.baseUrl} onChange={(e) => setModel({ ...model, baseUrl: e.target.value })} />
-              </div>
-              <div>
-                <label className="pxr-label" htmlFor="model-name">MODEL</label>
-                <input id="model-name" className="pxr-input" value={model.model} onChange={(e) => setModel({ ...model, model: e.target.value })} />
-              </div>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label className="pxr-label" htmlFor="model-key">API KEY (OPTIONAL, BROWSER ONLY)</label>
-                <input
-                  id="model-key"
-                  className="pxr-input"
-                  type="password"
-                  autoComplete="off"
-                  value={model.apiKey}
-                  onChange={(e) => setModel({ ...model, apiKey: e.target.value })}
-                  placeholder="Leave empty for a local model"
-                />
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-              <button type="button" className="pxr-btn pxr-btn-primary" onClick={saveModel}>
-                Save in this browser
-              </button>
-              {modelSaved && (
-                <button type="button" className="pxr-btn" onClick={forgetModel}>
-                  Forget
-                </button>
-              )}
-              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{modelSaved ? "Saved in this browser." : "Not saved yet."}</span>
-            </div>
-          </section>
+
+          </div>
         </main>
       </div>
     </div>
@@ -387,7 +363,7 @@ function LensList(props: {
                 background: "var(--surface)",
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 500 }}>{lens.name}</div>
+              <div style={{ fontSize: 13, fontWeight: 500, display: "flex", alignItems: "center", gap: 7 }}><span aria-hidden="true" style={{ width: 9, height: 9, borderRadius: "50%", background: lensColor(lens.id, lens.color), flexShrink: 0 }} />{lens.name}</div>
               <div className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
                 SCOPE {lens.scope} · v{lens.version}
               </div>

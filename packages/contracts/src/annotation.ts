@@ -6,6 +6,7 @@
  * client).
  */
 
+import type { Role } from "./user.js";
 import type { CharRange } from "./ir.js";
 
 /** Visibility of an annotation or an agent run (docs/02-decisions.md #5). Sharing granularity is the run, not the individual annotation. */
@@ -23,10 +24,23 @@ export interface Anchor {
   nodeId: string;
 }
 
+export interface AnnotationVotes {
+  upvotes: number;
+  downvotes: number;
+  myVote: -1 | 0 | 1;
+}
+
 export interface HumanAnnotation {
+  votes?: AnnotationVotes;
   id: string;
   docId: string;
   authorId: string;
+  authorName?: string;
+  authorRole?: Role;
+  parentId?: string | null;
+  parentKind?: "human" | "agent" | null;
+  threadRootId?: string | null;
+  threadRootKind?: "human" | "agent" | null;
   anchor: Anchor;
   /** Rich text (author-controlled). */
   body: string;
@@ -40,9 +54,16 @@ export interface HumanAnnotation {
 }
 
 export interface AgentAnnotation {
+  votes?: AnnotationVotes;
   id: string;
   docId: string;
   agentId: string;
+  /** Current Lens color; also available for shared personal or deleted lenses. */
+  lensColor?: string;
+  /** Current Lens name, also available for shared personal or deleted lenses. */
+  lensName?: string;
+  /** Display name of the personal run's owner; absent for org runs. */
+  ownerName?: string;
   agentVersion: string;
   /** Groups all annotations produced by one execution of one agent version. Rerunning an agent produces a new runId, never mutates a previous run (docs/01 "重跑与版本管理"). */
   runId: string;

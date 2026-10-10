@@ -1,10 +1,14 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
 import type { LensDraft, LensScope, LensSpec } from "@paper-xray/contracts";
+import { lensColor } from "@paper-xray/contracts";
 import { pool } from "./pool.js";
 
 interface LensRow extends RowDataPacket {
   id: string;
   owner_id: string | null;
+  provider_id: string | null;
+  model: string | null;
+  color: string | null;
   name: string;
   description: string;
   version: string;
@@ -20,6 +24,9 @@ interface LensRow extends RowDataPacket {
 function toLens(row: LensRow): LensSpec {
   return {
     id: row.id,
+    providerId: row.provider_id ?? null,
+    model: row.model ?? null,
+    color: lensColor(row.id, row.color),
     name: row.name,
     description: row.description,
     version: row.version,
@@ -63,9 +70,9 @@ export async function seedPresetLenses(presets: LensSpec[]): Promise<void> {
   for (const p of presets) {
     await pool.query(
       `INSERT IGNORE INTO lenses
-        (id, owner_id, name, description, version, kind, scope, instruction, max_annotations, execution_context, strict_scope, share_runs_with_org)
-       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 'org-server', ?, 1)`,
-      [p.id, p.name, p.description, p.version, p.kind, p.scope, p.instruction, p.maxAnnotations, p.strictScope ? 1 : 0],
+        (id, owner_id, name, description, version, kind, scope, instruction, max_annotations, execution_context, strict_scope, share_runs_with_org, color)
+       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?, 'org-server', ?, 1, ?)`,
+      [p.id, p.name, p.description, p.version, p.kind, p.scope, p.instruction, p.maxAnnotations, p.strictScope ? 1 : 0, lensColor(p.id, p.color)],
     );
   }
 }
@@ -78,8 +85,8 @@ export async function insertLens(params: {
   const { id, ownerId, draft } = params;
   await pool.query(
     `INSERT INTO lenses
-      (id, owner_id, name, description, version, kind, scope, instruction, max_annotations, execution_context, strict_scope, share_runs_with_org)
-     VALUES (?, ?, ?, ?, '1', 'model', ?, ?, ?, ?, ?, ?)`,
+      (id, owner_id, name, description, version, kind, scope, instruction, max_annotations, execution_context, strict_scope, share_runs_with_org, provider_id, model, color)
+     VALUES (?, ?, ?, ?, '1', 'model', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       ownerId,
@@ -88,10 +95,11 @@ export async function insertLens(params: {
       draft.scope,
       draft.instruction,
       draft.maxAnnotations,
-      ownerId === null ? "org-server" : "personal-client",
+      ownerId === null || draft.providerId?.startsWith("org-provider-") ? "org-server" : "personal-client",
       draft.strictScope ? 1 : 0,
       // Org lens runs are always org-visible (docs/02-decisions.md #5).
       ownerId === null || draft.shareRunsWithOrg ? 1 : 0,
+      draft.providerId ?? null, draft.model ?? null, lensColor(id, draft.color),
     ],
   );
   const created = await findLensById(id);
@@ -103,7 +111,7 @@ export async function insertLens(params: {
 export async function updateLens(existing: LensSpec, draft: LensDraft): Promise<LensSpec> {
   await pool.query(
     `UPDATE lenses SET name = ?, description = ?, scope = ?, instruction = ?, max_annotations = ?,
-       strict_scope = ?, share_runs_with_org = ?, version = ?
+       strict_scope = ?, share_runs_with_org = ?, version = ?, provider_id = ?, model = ?, color = ?, execution_context = ?
      WHERE id = ?`,
     [
       draft.name,
@@ -114,6 +122,10 @@ export async function updateLens(existing: LensSpec, draft: LensDraft): Promise<
       draft.strictScope ? 1 : 0,
       existing.ownerId === null || draft.shareRunsWithOrg ? 1 : 0,
       bumpVersion(existing.version),
+      draft.providerId !== undefined ? draft.providerId : existing.providerId ?? null,
+      draft.providerId !== undefined ? draft.model ?? null : existing.model ?? null,
+      lensColor(existing.id, draft.color ?? existing.color),
+      existing.ownerId === null || ((draft.providerId !== undefined ? draft.providerId : existing.providerId)?.startsWith("org-provider-")) ? "org-server" : "personal-client",
       existing.id,
     ],
   );

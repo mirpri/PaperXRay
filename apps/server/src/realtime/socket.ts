@@ -35,14 +35,17 @@ export function initSocket(server: HttpServer): SocketIoServer {
   // documents are being annotated.
   io.use((socket, next) => {
     const raw = readCookie(socket.handshake.headers.cookie, SESSION_COOKIE_NAME);
-    if (!verify(raw, config.session.secret)) {
+    const userId = verify(raw, config.session.secret);
+    if (!userId) {
       next(new Error("Login required"));
       return;
     }
+    socket.data.userId = userId;
     next();
   });
 
   io.on("connection", (socket) => {
+    socket.join(`user:${socket.data.userId}`);
     socket.on("join", (docId: string) => {
       socket.join(roomFor(docId));
     });
@@ -58,4 +61,9 @@ function roomFor(docId: string): string {
 /** Fired for any annotation change on a doc — a lens run completing, or a human annotation created/edited/deleted. Clients treat this as "refetch", not as a diff. */
 export function broadcastAnnotationsChanged(docId: string): void {
   io?.to(roomFor(docId)).emit("annotations:changed", { docId });
+}
+
+/** User-specific inbox updates; the room is assigned from the signed session. */
+export function broadcastNotificationsChanged(userId: string): void {
+  io?.to(`user:${userId}`).emit("notifications:changed");
 }

@@ -6,7 +6,7 @@
 pnpm eval                      # 对 eval/golden/*.json 逐篇出报告
 pnpm eval --out eval/report.md # 同时写入文件
 pnpm eval --update-snapshots   # 有意改动解析器后，重新生成锚点快照（见下）
-pnpm eval --record-runs        # 用组织模型（PPIO_API_KEY）跑四个预置 lens，把原始输出存进 eval/runs/
+pnpm eval --record-runs        # 用管理面板中为各 Lens 配置的模型跑四个预置 lens，把原始输出存进 eval/runs/
 ```
 
 `pnpm test` 里的 `apps/server/src/eval/golden.test.ts` 会跑同一套锚点与阅读顺序检查，所以解析器的回归会直接让测试变红。

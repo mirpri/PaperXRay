@@ -4,13 +4,19 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "pnpm --filter @paper-xray/contracts build && tsx watch src/index.ts",
     "build": "tsc -b",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "migrate": "tsx src/db/migrate.ts",
-    "eval": "tsx src/eval/run-eval.ts"
+    "db:externalize": "tsx src/db/externalize-content.ts",
+    "db:providers": "tsx src/db/setup-providers.ts",
+    "db:comments": "tsx src/db/setup-comments.ts",
+    "db:install": "tsx src/db/install.ts",
+    "eval": "tsx src/eval/run-eval.ts",
+    "db:lens-colors": "tsx src/db/setup-lens-colors.ts",
+    "db:notifications": "tsx src/db/setup-notifications.ts",
+    "db:votes": "tsx src/db/setup-votes.ts"
   },
   "dependencies": {
     "@paper-xray/contracts": "workspace:*",

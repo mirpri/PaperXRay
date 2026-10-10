@@ -1,6 +1,7 @@
 import { Router, type Router as RouterType } from "express";
+import { requireAuth } from "../auth/middleware.js";
 import { config } from "../config.js";
-import { getSsoConfig, upsertUserFromSso } from "../db/repositories.js";
+import { getAccountManagementUrl, getSsoConfig, upsertUserFromSso } from "../db/repositories.js";
 import { codeChallengeFromVerifier, generateCodeVerifier, generateState } from "../auth/pkce.js";
 import { OAUTH_STATE_COOKIE_NAME, readAndClearOAuthStateCookie, setOAuthStateCookie } from "../auth/oauth-state.js";
 import { clearSessionCookie, setSessionCookie } from "../auth/session.js";
@@ -127,6 +128,12 @@ authRouter.get("/auth/callback", async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+authRouter.get("/auth/account-management", requireAuth, async (_req, res, next) => {
+  try {
+    res.set("Cache-Control", "no-store").json({ accountManagementUrl: await getAccountManagementUrl() });
+  } catch (err) { next(err); }
 });
 
 authRouter.get("/auth/me", (req, res) => {

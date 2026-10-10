@@ -1,14 +1,8 @@
-import type { Annotation, Visibility } from "@paper-xray/contracts";
-import { isAgentAnnotation, sliceByCodePoints } from "@paper-xray/contracts";
-import { Avatar } from "./Avatar";
-
-
-const SEVERITY_COLOR: Record<string, string> = {
-  high: "var(--agent)",
-  medium: "var(--agent)",
-  low: "#9A9A9A",
-  info: "#9A9A9A",
-};
+import type { Annotation, HumanAnnotation, Role, Visibility } from "@paper-xray/contracts";
+import { isAgentAnnotation, sliceByCodePoints, lensColor } from "@paper-xray/contracts";
+import { AnnotationDiscussion } from "./AnnotationDiscussion";
+import { annotationLensLabel } from "./lens-labels";
+import { UserIdentity } from "./UserIdentity";
 
 export function annotationCardElementId(annotationId: string): string {
   return `pxr-annotation-card-${annotationId}`;
@@ -20,14 +14,22 @@ export function AnnotationCard({
   active,
   onJumpTo,
   lensName,
+  color: configuredColor,
   currentUserId,
+  currentUserRole,
+  repliesByParent,
+  onCommentsChanged,
   onSetRunVisibility,
 }: {
   annotation: Annotation;
   normalizedText: string;
-  /** Display name of the lens that produced an agent annotation (falls back to its id, e.g. for a deleted lens). */
+  /** Display label from the reader; shared runs include the owner nickname. */
   lensName?: string;
+  color?: string;
   currentUserId: string | null;
+  currentUserRole?: Role;
+  repliesByParent: Map<string, HumanAnnotation[]>;
+  onCommentsChanged: () => void;
   /** Share/unshare the whole run this annotation belongs to — offered only on the viewer's own personal-lens runs. */
   onSetRunVisibility?: (runId: string, visibility: Visibility) => void;
   /** True right after this annotation's PDF mark was clicked — see pages/ReaderPage.tsx's activeAnnotationId. */
@@ -35,23 +37,11 @@ export function AnnotationCard({
   onJumpTo: (annotationId: string) => void;
 }) {
   const agent = isAgentAnnotation(annotation);
+  const color = agent ? lensColor(annotation.agentId, configuredColor ?? annotation.lensColor) : "var(--human)";
   const ownRun = agent && annotation.ownerId !== null && annotation.ownerId === currentUserId;
 
-  return (
-    <div
-      id={annotationCardElementId(annotation.id)}
-      className={active ? "pxr-annotation-card-active" : undefined}
-      style={{
-        background: "var(--surface)",
-        border: "1px solid var(--border-strong)",
-        borderRadius: 4,
-        padding: "12px 14px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 9,
-      }}
-    >
-      {agent ? (
+  const header = (
+    agent ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <span
@@ -60,12 +50,12 @@ export function AnnotationCard({
                 fontSize: 9,
                 padding: "3px 6px",
                 borderRadius: 2,
-                background: "var(--agent-soft)",
-                color: "var(--agent-ink)",
+                background: `${color}20`,
+                color,
                 letterSpacing: "0.06em",
               }}
             >
-              {lensName ?? annotation.agentId}
+              {lensName ?? annotationLensLabel(annotation, currentUserId)}
             </span>
             {annotation.visibility === "private" && (
               <span className="mono" style={{ fontSize: 9, color: "var(--text-muted)" }}>
@@ -75,13 +65,13 @@ export function AnnotationCard({
           </div>
           <span
             className="mono"
-            style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9, color: "var(--agent-ink)" }}
+            style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 9, color }}
           >
             <span
               style={{
                 width: 5,
                 height: 5,
-                background: SEVERITY_COLOR[annotation.severity],
+                background: color,
                 display: "inline-block",
               }}
             />
@@ -90,22 +80,23 @@ export function AnnotationCard({
         </div>
       ) : (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Avatar name="Member" size={21} />
-          <span style={{ fontSize: 12, fontWeight: 500 }}>Human note</span>
+          <UserIdentity name={annotation.authorName} />
           {annotation.visibility === "private" && (
             <span className="mono" style={{ fontSize: 9, color: "var(--text-muted)" }}>
               PRIVATE
             </span>
           )}
         </div>
-      )}
-
-      <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "#242424" }}>
-        {agent ? annotation.comment : annotation.body}
-      </p>
+      )
+  );
+  const content = <>
+    {agent && <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "#242424" }}>
+        {annotation.comment}
+      </p>}
 
       {agent && (
         <div
+          onClick={(e) => { e.stopPropagation(); onJumpTo(annotation.id); }}
           style={{
             background: "#F2F2F2",
             borderRadius: 3,
@@ -113,6 +104,7 @@ export function AnnotationCard({
             display: "flex",
             flexDirection: "column",
             gap: 5,
+            cursor: "pointer",
           }}
         >
           <span className="mono" style={{ fontSize: 8, letterSpacing: "0.16em", color: "var(--text-muted)" }}>
@@ -126,40 +118,31 @@ export function AnnotationCard({
           </span>
         </div>
       )}
+  </>;
 
-      <div style={{ display: "flex", gap: 7 }}>
-        <button
-          onClick={() => onJumpTo(annotation.id)}
-          style={{
-            fontSize: 11,
-            height: 29,
-            padding: "0 10px",
-            border: "1px solid var(--border-strong)",
-            borderRadius: 3,
-            background: "var(--surface)",
-            color: "var(--text)",
-          }}
-        >
-          Jump to text
-        </button>
-        {ownRun && onSetRunVisibility && (
-          <button
-            onClick={() => onSetRunVisibility(annotation.runId, annotation.visibility === "private" ? "org" : "private")}
-            title="Applies to every annotation from this run"
-            style={{
-              fontSize: 11,
-              height: 29,
-              padding: "0 10px",
-              border: "1px solid var(--border-strong)",
-              borderRadius: 3,
-              background: "var(--surface)",
-              color: "var(--text)",
-            }}
-          >
-            {annotation.visibility === "private" ? "Share run with org" : "Make run private"}
-          </button>
-        )}
-      </div>
+  return (
+    <div
+      id={annotationCardElementId(annotation.id)}
+      className={active ? "pxr-annotation-card pxr-annotation-card-active" : "pxr-annotation-card"}
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border-strong)",
+        borderRadius: 4,
+        padding: "12px 14px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 9,
+      }}
+    >
+      <AnnotationDiscussion
+        annotation={annotation} byParent={repliesByParent} userId={currentUserId}
+        role={currentUserRole} onChanged={onCommentsChanged}
+        rootHeader={header} rootContent={content}
+        runVisibilityAction={ownRun && onSetRunVisibility ? {
+          currentVisibility: annotation.visibility,
+          onToggle: () => onSetRunVisibility(annotation.runId, annotation.visibility === "private" ? "org" : "private"),
+        } : undefined}
+      />
     </div>
   );
 }

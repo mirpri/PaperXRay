@@ -47,7 +47,7 @@ describe("runModelLens", () => {
       }),
     );
 
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
 
     expect(result).toHaveLength(1);
     expect(result[0].evidenceSpan).toEqual({ start: 0, end: "We use a novel transformer architecture for this task.".length });
@@ -62,7 +62,7 @@ describe("runModelLens", () => {
       JSON.stringify({ annotations: [{ evidenceText: "text that does not appear", comment: "x", severity: "low" }] }),
     );
 
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
     expect(result).toHaveLength(0);
   });
 
@@ -71,13 +71,13 @@ describe("runModelLens", () => {
       "```json\n" + JSON.stringify({ annotations: [{ evidenceText: "It works well in practice.", comment: "x", severity: "info" }] }) + "\n```",
     );
 
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
     expect(result).toHaveLength(1);
   });
 
   it("returns an empty array on unparseable model output instead of throwing", async () => {
     vi.mocked(callChatModel).mockResolvedValue("not json at all");
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
     expect(result).toEqual([]);
   });
 
@@ -85,7 +85,7 @@ describe("runModelLens", () => {
     vi.mocked(callChatModel).mockResolvedValue(
       JSON.stringify({ annotations: [{ evidenceText: "It works well in practice.", comment: "x", severity: "info", confidence: 5 }] }),
     );
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
     expect(result[0].confidence).toBe(1);
   });
 
@@ -96,7 +96,7 @@ describe("runModelLens", () => {
       severity: "info",
     }));
     vi.mocked(callChatModel).mockResolvedValue(JSON.stringify({ annotations: many }));
-    const result = await runModelLens({ spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
+    const result = await runModelLens({ modelConfig: { baseUrl: "https://test.invalid/v1", model: "test", apiKey: "" }, spec: SPEC, docId: "doc1", normalizedText: TEXT, nodes: [NODE] });
     expect(result.length).toBeLessThanOrEqual(SPEC.maxAnnotations);
   });
 });

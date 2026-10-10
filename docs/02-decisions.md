@@ -34,9 +34,11 @@
 
 | 角色 | 权限 |
 | --- | --- |
-| `admin` | 用户与角色管理、组织设置 |
+| `admin` | 用户与角色管理、组织设置；可删除非管理员的评论 |
 | `curator` | 创建 / 修改组织公用 lens |
 | `member` | 使用组织 lens、创建个人 lens、读写自己的标注 |
+
+所有登录用户均可回复可见评论，回复可继续回复。用户只能编辑自己的评论；可以删除自己的评论。管理员可额外删除非管理员的评论，不能编辑他人的评论或删除其他管理员的评论。删除采用软删除，有后续回复时保留占位。
 
 ## 5. 可见性：两值
 
@@ -141,10 +143,11 @@ URL 抓取必须处理两件事：
 
 ### MariaDB 使用约定
 
-- 引擎 **InnoDB**，行格式 `DYNAMIC`，字符集 **`utf8mb4`**。归一化全文含 CJK 与数学符号，三字节 `utf8` 不够。
+- PDF、归一化全文和 CharMap 按 contentHash 存在文件目录中；MariaDB 仅保存文档元数据、段落索引、用户、Lens 和标注。
+- 引擎 **InnoDB**，行格式 `DYNAMIC`，字符集 **`utf8mb4`**。元数据及标注可能含 CJK 与数学符号，三字节 `utf8` 不够。
 - MariaDB 的 `JSON` 只是 `LONGTEXT` 的别名，**不是二进制 JSON**，没有 PostgreSQL JSONB 那种可索引存储。因此 `anchor`、`evidenceSpan` 可以整体存 JSON 文本，但**任何用于过滤或连接的字段必须提升为独立列**：`docId`、`runId`、`agentId`、`agentVersion`、`severity`、`visibility`。确需按 JSON 内字段查询时用虚拟生成列加索引。
 - 乐观锁（见 01 文档「实时协作」）用 `UPDATE ... WHERE id = ? AND version = ?`，以 RowsAffected 为 0 判定冲突，不需要行锁或事务重试。
-- 驱动用 `mysql2`（支持 Promise），迁移用 `node-pg-migrate` 或手写 SQL。
+- 驱动用 `mysql2`（支持 Promise），数据库通过 `pnpm db:install` 安装最新完整的 `schema.sql`，不维护增量迁移。
 - 术语检索（01 文档 N 节「定义式检索与跳转」）若需全文搜索：InnoDB FULLTEXT 对英文可用，对中文需额外分词。本期先用前缀索引加 `LIKE`，全文搜索列入 future work。
 
 ### Node.js 侧候选选型
@@ -157,7 +160,7 @@ URL 抓取必须处理两件事：
 | WebSocket | `ws`（轻量）或 `socket.io`（功能更全，自动重连、房间管理） |
 | 数据访问 | `mysql2` + 手写查询，或 `Knex.js`（查询构建器，不引 ORM） |
 | PDF 提取 | `pdfjs-dist`（前后端统一） |
-| 迁移 | `node-pg-migrate` 或手写 SQL 脚本 |
+| 数据库安装 | `schema.sql` + `pnpm db:install`（仅全新或空库） |
 | 测试 | `Jest` 或 `Vitest`；重组层每个纯函数单独测 |
 
 三份契约现在只需要**一份定义**：TypeScript 类型，前后端共用。W1 一并定死。JSON 字段名统一 camelCase。
@@ -165,3 +168,7 @@ URL 抓取必须处理两件事：
 ### 排期影响
 
 W1 减少一项：不再需要验证 MuPDF 提取质量和 cgo 构建链。W2 的重组层直接用 `pdfjs-dist`，工作量不变，但 CharMap 实现会因前后端 item 下标一致而简化。
+
+### Provider 配置补充
+
+模型 API 以 Provider 管理，Lens 只保存 Provider 与 model 选择。组织 Provider 的凭据在服务端，个人 Provider 只在服务端同步元数据，凭据按用户保存在浏览器。个人 Lens 选择组织 Provider 时改为服务端调用，但标注 owner 与 private/org 可见性规则保持个人 Lens 的设置。

@@ -1,17 +1,8 @@
 import { useEffect, useState } from "react";
 
-const ZOOM_STEPS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+import { ZOOM_STEPS } from "../pdf/usePdfZoom";
 
-/**
- * Zoom + page-jump controls. react-pdf-highlighter@7 doesn't react to a
- * changed `pdfScaleValue` prop after mount (only reads it once, at initial
- * document-ready) and doesn't expose its internal PDFViewer instance to the
- * parent at all — so "zoom" here works by remounting <PdfHighlighter> with a
- * new `key` (forcing a fresh init that picks up the new pdfScaleValue), and
- * "go to page" works by scrolling the actual page <div data-page-number>
- * pdf.js's own viewer renders, both driven from outside the library rather
- * than through any API it offers for this.
- */
+/** Controls the live PDF.js viewer without remounting its pages. */
 export function PdfToolbar({
   scale,
   onScaleChange,
@@ -51,13 +42,13 @@ export function PdfToolbar({
 
   return (
     <div className="pxr-toolbar">
-      <button onClick={zoomOut} aria-label="Zoom out">
+      <button onClick={zoomOut} aria-label="Zoom out" disabled={scale <= ZOOM_STEPS[0]}>
         −
       </button>
       <span className="mono" style={{ fontSize: 11, minWidth: 38, textAlign: "center" }}>
         {Math.round(scale * 100)}%
       </span>
-      <button onClick={zoomIn} aria-label="Zoom in">
+      <button onClick={zoomIn} aria-label="Zoom in" disabled={scale >= ZOOM_STEPS[ZOOM_STEPS.length - 1]}>
         +
       </button>
       <div className="pxr-toolbar-sep" />

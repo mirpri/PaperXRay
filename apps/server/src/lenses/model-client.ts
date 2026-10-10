@@ -1,37 +1,37 @@
-import { config } from "../config.js";
+export interface ChatModelConfig {
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-/** True once an org-level model endpoint is configured; callers use this to fall back to the deterministic fake-lens instead of failing the whole upload. */
-export function isModelConfigured(): boolean {
-  return config.ppio.apiKey.length > 0;
-}
-
 /**
- * Minimal OpenAI-compatible chat completion call against PPIO
+ * Minimal OpenAI-compatible chat completion call against the selected endpoint
  * (docs/02-decisions.md #6: org-owned lenses run server-side against an
  * org-configured model endpoint). No SDK dependency — one endpoint, one
  * shape, not worth the extra package.
  */
-export async function callChatModel(messages: ChatMessage[]): Promise<string> {
-  const res = await fetch(`${config.ppio.baseUrl}/chat/completions`, {
+export async function callChatModel(messages: ChatMessage[], endpoint: ChatModelConfig): Promise<string> {
+  const res = await fetch(`${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.ppio.apiKey}`,
+      ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}),
     },
     body: JSON.stringify({
-      model: config.ppio.model,
+      model: endpoint.model,
       messages,
       temperature: 0.2,
     }),
   });
 
   if (!res.ok) {
-    throw new Error(`Model call failed: ${res.status} ${await res.text()}`);
+    // Provider error bodies may contain request details or credentials.
+    throw new Error(`Model call failed: HTTP ${res.status}`);
   }
 
   const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };

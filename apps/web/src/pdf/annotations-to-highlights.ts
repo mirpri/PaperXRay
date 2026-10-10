@@ -1,12 +1,13 @@
 import type { Highlight } from "react-pdf-highlighter-extended";
 import type { Annotation, CharMap } from "@paper-xray/contracts";
-import { isAgentAnnotation } from "@paper-xray/contracts";
+import { isAgentAnnotation, lensColor } from "@paper-xray/contracts";
 import { mapCharRangeToRects, type PdfRect } from "../anchoring/reverse-map";
 import type { PageGeometries } from "./useItemGeometries";
 
 export interface PxrHighlight extends Highlight {
   annotationId: string;
   isAgent: boolean;
+  color?: string;
 }
 
 /**
@@ -23,6 +24,7 @@ export function annotationsToHighlights(
   annotations: Annotation[],
   charMap: CharMap,
   geometries: PageGeometries,
+  lensColors: ReadonlyMap<string, string> = new Map(),
 ): PxrHighlight[] {
   const result: PxrHighlight[] = [];
 
@@ -65,6 +67,7 @@ export function annotationsToHighlights(
         id: `${annotation.id}:${page}`,
         annotationId: annotation.id,
         isAgent: agent,
+        color: agent ? lensColor(annotation.agentId, lensColors.get(annotation.agentId) ?? annotation.lensColor) : "#40628C",
         type: "text",
         content: { text: agent ? annotation.comment : annotation.body },
         position: { boundingRect, rects: scaledRects, usePdfCoordinates: true },

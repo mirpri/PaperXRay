@@ -3,7 +3,7 @@ import { config } from "../config.js";
 
 /**
  * Single shared pool. Per docs/02-decisions.md #12: InnoDB, DYNAMIC row
- * format, utf8mb4 (normalizedText contains CJK and math symbols that don't
+ * format, utf8mb4 (metadata and annotations can contain symbols that don't
  * fit 3-byte utf8).
  */
 export const pool = mysql.createPool({

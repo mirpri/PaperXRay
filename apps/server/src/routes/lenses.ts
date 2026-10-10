@@ -3,6 +3,7 @@ import { v4 as uuid } from "uuid";
 import type { LensSpec, User } from "@paper-xray/contracts";
 import { requireAuth } from "../auth/middleware.js";
 import { deleteLens, findLensById, insertLens, listLensesForUser, updateLens } from "../db/lens-repository.js";
+import { findProvider } from "../db/providers.js";
 import { validateLensDraft } from "../lenses/validate-draft.js";
 
 export const lensesRouter: RouterType = Router();
@@ -40,6 +41,12 @@ lensesRouter.post("/lenses", requireAuth, async (req, res, next) => {
       res.status(403).json({ error: "Only curators can create org lenses" });
       return;
     }
+    if (validated.draft.providerId) {
+      const provider = await findProvider(validated.draft.providerId);
+      if (!provider || (provider.ownerId !== null && (org || provider.ownerId !== req.user!.id))) {
+        res.status(400).json({ error: "Provider or model is unavailable for this lens" }); return;
+      }
+    }
     const lens = await insertLens({ id: `${org ? "org" : "personal"}-${uuid()}`, ownerId, draft: validated.draft });
     res.status(201).json({ lens });
   } catch (err) {
@@ -62,6 +69,12 @@ lensesRouter.put("/lenses/:id", requireAuth, async (req, res, next) => {
     if (!validated.ok) {
       res.status(400).json({ error: validated.error });
       return;
+    }
+    if (validated.draft.providerId) {
+      const provider = await findProvider(validated.draft.providerId);
+      if (!provider || (provider.ownerId !== null && (existing.ownerId === null || provider.ownerId !== req.user!.id))) {
+        res.status(400).json({ error: "Provider or model is unavailable for this lens" }); return;
+      }
     }
     res.json({ lens: await updateLens(existing, validated.draft) });
   } catch (err) {

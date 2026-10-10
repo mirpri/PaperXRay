@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { PdfHighlighter, PdfLoader, type PdfHighlighterUtils } from "react-pdf-highlighter-extended";
 import workerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
 import type { Annotation, CharMap, Document, LensSpec, Node as IrNode, Visibility } from "@paper-xray/contracts";
+import { lensColor } from "@paper-xray/contracts";
 import {
   createHumanAnnotation,
   documentFileUrl,
@@ -18,32 +19,34 @@ import {
 } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { DensityBar } from "../components/DensityBar";
-import { DisplayControls } from "../components/DisplayControls";
 import {
   applyDisplayFilter,
   groupKey,
   HUMAN_GROUP,
   loadDisplaySettings,
   pageDensity,
-  saveDisplaySettings,
-  SHOW_EVERYTHING,
   type DisplaySettings,
 } from "../pdf/display-filter";
-import { loadPersonalModelSettings } from "../personal/model-settings";
+import { fetchProviders } from "../api";
+import { loadProviderKey } from "../personal/provider-keys";
+import { loadPersonalModelSettings, type PersonalModelSettings } from "../personal/model-settings";
+import { useLensRunActivity } from "../personal/useLensRunActivity";
 import { runPersonalLens } from "../personal/run-personal-lens";
 import { useDocumentSocket } from "../useDocumentSocket";
 import { Header } from "../components/Header";
 import { AnnotationCard, annotationCardElementId } from "../components/AnnotationCard";
+import { readerLensLabels } from "../components/lens-labels";
+import { commentThreads } from "../components/comment-threads";
 import { FilterChip } from "../components/FilterChip";
 import { NoteComposer } from "../components/NoteComposer";
 import { PdfToolbar } from "../components/PdfToolbar";
 import { useItemGeometries } from "../pdf/useItemGeometries";
+import { usePdfZoom, clampPdfScale } from "../pdf/usePdfZoom";
 import { useCurrentPage } from "../pdf/useCurrentPage";
 import { PxrHighlightContainer } from "../pdf/PxrHighlightContainer";
 import { annotationsToHighlights, type PxrHighlight } from "../pdf/annotations-to-highlights";
 import { findContainingNode, findTextRange } from "../anchoring/find-text-range";
 
-const ZOOM_STEPS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const MIN_ASIDE_WIDTH = 260;
 const MAX_ASIDE_WIDTH = 640;
 
@@ -54,6 +57,9 @@ function titleFor(doc: Document): string {
 export function ReaderPage() {
   const { id } = useParams<{ id: string }>();
   const docId = id!;
+  const [searchParams] = useSearchParams();
+  const messageCommentId = searchParams.get("comment");
+  const openedMessageRef = useRef<string | null>(null);
 
   // Named `doc` (not `document`) deliberately — this component also needs
   // the real global `document` (DOM) for jump-to-text scrolling, and a
@@ -70,15 +76,16 @@ export function ReaderPage() {
   // Sidebar-card emphasis when a PDF mark is clicked (pxr/annotations-to-highlights
   // PDF-side glow instead uses the library's own isScrolledTo — see PxrHighlightContainer).
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
-  const [runningLensId, setRunningLensId] = useState<string | null>(null);
-  const [noteHint, setNoteHint] = useState(false);
+  const { trackLensRun, isLensRunning } = useLensRunActivity(docId);
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.5);
   const [asideWidth, setAsideWidth] = useState(378);
 
+  const activeDocIdRef = useRef(docId);
+  activeDocIdRef.current = docId;
   const pdfContainerRef = useRef<HTMLDivElement>(null);
   const pdfHighlighterUtilsRef = useRef<PdfHighlighterUtils | undefined>(undefined);
-  const lastWheelZoomAt = useRef(0);
+  usePdfZoom(pdfContainerRef, pdfHighlighterUtilsRef, setScale);
 
   const reloadAnnotations = useCallback(() => {
     fetchAnnotations(docId).then(setAnnotations).catch((err) => setError(String(err)));
@@ -86,11 +93,16 @@ export function ReaderPage() {
 
   const reloadLensRuns = useCallback(() => {
     fetchLensRuns(docId)
-      .then((runs) => setRanLensIds(new Set(runs.map((r) => r.lensId))))
+      .then((runs) => {
+        if (activeDocIdRef.current !== docId) return;
+        // A response started before a run completed must not erase that completion.
+        setRanLensIds(current => new Set([...current, ...runs.map(r => r.lensId)]));
+      })
       .catch((err) => setError(String(err)));
   }, [docId]);
 
   useEffect(() => {
+    setRanLensIds(new Set());
     fetchDocument(docId).then(setDoc).catch((err) => setError(String(err)));
     fetchNodes(docId).then(setNodes).catch((err) => setError(String(err)));
     fetchCharMap(docId).then(setCharMap).catch((err) => setError(String(err)));
@@ -106,11 +118,6 @@ export function ReaderPage() {
   }, [reloadAnnotations, reloadLensRuns]);
   useDocumentSocket(docId, onRemoteChange);
 
-  function changeDisplay(next: DisplaySettings) {
-    setDisplay(next);
-    saveDisplaySettings(next);
-  }
-
   function toggleGroup(key: string) {
     const hidden = display.hiddenGroups.includes(key)
       ? display.hiddenGroups.filter((g) => g !== key)
@@ -118,8 +125,29 @@ export function ReaderPage() {
     setDisplay({ ...display, hiddenGroups: hidden });
   }
 
-  const displayResult = useMemo(() => applyDisplayFilter(annotations, display), [annotations, display]);
-  const visibleAnnotations = displayResult.visible;
+  const threads = useMemo(() => commentThreads(annotations), [annotations]);
+  const rootAnnotations = threads.roots;
+  const displayResult = useMemo(() => applyDisplayFilter(rootAnnotations, display), [rootAnnotations, display]);
+  const [sortBy, setSortBy] = useState<"position" | "confidence" | "time">("position");
+  const visibleAnnotations = useMemo(() => {
+    const sorted = [...displayResult.visible];
+    switch (sortBy) {
+      case "position":
+        return sorted.sort((a, b) => a.anchor.charRange.start - b.anchor.charRange.start);
+      case "confidence":
+        return sorted.sort((a, b) => {
+          const aConf = "confidence" in a ? a.confidence : 0;
+          const bConf = "confidence" in b ? b.confidence : 0;
+          return bConf - aConf; // descending
+        });
+      case "time":
+        return sorted.sort((a, b) => {
+          const aTime = new Date(a.createdAt).getTime();
+          const bTime = new Date(b.createdAt).getTime();
+          return bTime - aTime; // newest first
+        });
+    }
+  }, [displayResult.visible, sortBy]);
 
   const fileUrl = documentFileUrl(docId);
   // The file route requires the session cookie; memoized so PdfLoader doesn't see a new object (and reload the PDF) every render.
@@ -127,23 +155,57 @@ export function ReaderPage() {
   const geometries = useItemGeometries(fileUrl);
   const currentPage = useCurrentPage(pdfContainerRef, scale);
 
+  const lensColors = useMemo(() => {
+    const colors = new Map<string, string>();
+    for (const a of annotations) if ("agentId" in a) colors.set(a.agentId, lensColor(a.agentId, a.lensColor));
+    for (const l of lenses ?? []) colors.set(l.id, lensColor(l.id, l.color));
+    return colors;
+  }, [annotations, lenses]);
+
   const highlights: PxrHighlight[] = useMemo(() => {
     if (!charMap || !geometries) return [];
-    return annotationsToHighlights(visibleAnnotations, charMap, geometries);
-  }, [visibleAnnotations, charMap, geometries]);
+    return annotationsToHighlights(visibleAnnotations, charMap, geometries, lensColors);
+  }, [visibleAnnotations, charMap, geometries, lensColors]);
 
   const density = useMemo(() => (doc ? pageDensity(highlights, doc.pageCount) : []), [highlights, doc]);
 
-  const lensNames = useMemo(() => new Map((lenses ?? []).map((l) => [l.id, l.name])), [lenses]);
+  const lensNames = useMemo(() => readerLensLabels(annotations, lenses ?? [], user?.id ?? null), [annotations, lenses, user?.id]);
 
   const countsByGroup = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const a of annotations) {
+    for (const a of rootAnnotations) {
       const key = groupKey(a);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [annotations]);
+  }, [rootAnnotations]);
+
+  useEffect(() => {
+    if (!messageCommentId) return;
+    const key = `${docId}:${messageCommentId}`;
+    if (openedMessageRef.current === key) return;
+    const comment = annotations.find(a => a.id === messageCommentId);
+    if (!comment) return;
+    const rootId = "authorId" in comment && comment.parentId ? comment.threadRootId : comment.id;
+    const root = rootAnnotations.find(a => a.id === rootId);
+    if (!root) return;
+    if (!visibleAnnotations.some(a => a.id === root.id)) {
+      setDisplay(current => ({ ...current, hiddenGroups: current.hiddenGroups.filter(key => key !== groupKey(root)) }));
+      return;
+    }
+    let element: HTMLElement | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const frame = requestAnimationFrame(() => {
+      element = window.document.getElementById(`pxr-comment-${messageCommentId}`);
+      if (!element) return;
+      openedMessageRef.current = key;
+      setActiveAnnotationId(root.id);
+      element.scrollIntoView({ behavior: "smooth", block: "center" });
+      element.classList.add("pxr-comment-message-target");
+      timer = setTimeout(() => { element?.classList.remove("pxr-comment-message-target"); setActiveAnnotationId(null); }, 3300);
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); element?.classList.remove("pxr-comment-message-target"); };
+  }, [docId, messageCommentId, annotations, rootAnnotations, visibleAnnotations]);
 
   /**
    * Zoom, driven directly through the live pdf.js viewer instance
@@ -155,7 +217,8 @@ export function ReaderPage() {
    * flicker/scroll-jump. Setting `viewer.currentScaleValue` directly is
    * pdf.js's own API for this and updates in place with no remount.
    */
-  function changeScale(newScale: number) {
+  function changeScale(requestedScale: number) {
+    const newScale = clampPdfScale(requestedScale);
     setScale(newScale);
     const viewer = pdfHighlighterUtilsRef.current?.getViewer();
     if (viewer) viewer.currentScaleValue = String(newScale);
@@ -166,34 +229,6 @@ export function ReaderPage() {
     const viewer = pdfHighlighterUtilsRef.current?.getViewer();
     if (viewer) viewer.currentPageNumber = page;
   }
-
-  // Ctrl/Cmd + wheel to zoom, like every other PDF viewer. Throttled to at
-  // most one zoom step per 250ms so a fast trackpad/wheel gesture doesn't
-  // fire dozens of scale changes in a row.
-  useEffect(() => {
-    const container = pdfContainerRef.current;
-    if (!container) return;
-
-    function onWheel(e: WheelEvent) {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault();
-      const now = Date.now();
-      if (now - lastWheelZoomAt.current < 250) return;
-      lastWheelZoomAt.current = now;
-      setScale((current) => {
-        const next =
-          e.deltaY < 0
-            ? ZOOM_STEPS.find((s) => s > current) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1]
-            : [...ZOOM_STEPS].reverse().find((s) => s < current) ?? ZOOM_STEPS[0];
-        const viewer = pdfHighlighterUtilsRef.current?.getViewer();
-        if (viewer) viewer.currentScaleValue = String(next);
-        return next;
-      });
-    }
-
-    container.addEventListener("wheel", onWheel, { passive: false });
-    return () => container.removeEventListener("wheel", onWheel);
-  }, []);
 
   // Draggable divider resizing the annotations sidebar.
   function startResizing(startEvent: React.MouseEvent) {
@@ -243,39 +278,42 @@ export function ReaderPage() {
    * quoted results go to the server, which re-verifies them.
    */
   async function triggerLensRun(lens: LensSpec) {
-    setError(null);
-    setNotice(null);
-    let settings = null;
-    if (lens.executionContext === "personal-client") {
-      settings = loadPersonalModelSettings();
-      if (!settings) {
-        setError("Set up your model endpoint on the Lenses page before running a personal lens.");
-        return;
+    await trackLensRun(lens.id, async () => {
+      setError(null);
+      setNotice(null);
+      try {
+        let settings: PersonalModelSettings | null = null;
+        if (lens.executionContext === "personal-client") {
+          if (lens.providerId) {
+            const provider = (await fetchProviders()).find((p) => p.id === lens.providerId && p.ownerId === user?.id);
+            if (!provider || !lens.model?.trim()) throw new Error("The selected provider or model is unavailable. Update this lens in Lenses settings.");
+            settings = { baseUrl: provider.baseUrl, model: lens.model, apiKey: loadProviderKey(user!.id, provider.id) };
+          } else settings = loadPersonalModelSettings();
+          if (!settings) throw new Error("Choose a provider and model on the Lenses page before running this lens.");
+          if (!doc) return;
+        }
+        const result = settings
+          ? await submitClientLensRun(
+              docId,
+              lens.id,
+              await runPersonalLens({ spec: lens, normalizedText: doc!.normalizedText, settings }),
+            )
+          : await runLens(docId, lens.id);
+        if (activeDocIdRef.current !== docId) return;
+        const dropped = result.submittedCount - result.producedCount;
+        setNotice(
+          `${lens.name}: ${result.producedCount} annotation${result.producedCount === 1 ? "" : "s"}` +
+            (dropped > 0 ? `, ${dropped} dropped by evidence verification.` : "."),
+        );
+        // Show completion immediately, rather than briefly returning to “run” while refetching.
+        setRanLensIds(current => new Set([...current, lens.id]));
+        setDisplay(current => ({ ...current, hiddenGroups: current.hiddenGroups.filter(id => id !== lens.id) }));
+        reloadAnnotations();
+        reloadLensRuns();
+      } catch (err) {
+        if (activeDocIdRef.current === docId) setError(err instanceof Error ? err.message : String(err));
       }
-      if (!doc) return;
-    }
-    setRunningLensId(lens.id);
-    try {
-      const result = settings
-        ? await submitClientLensRun(
-            docId,
-            lens.id,
-            await runPersonalLens({ spec: lens, normalizedText: doc!.normalizedText, settings }),
-          )
-        : await runLens(docId, lens.id);
-      const dropped = result.submittedCount - result.producedCount;
-      setNotice(
-        `${lens.name}: ${result.producedCount} annotation${result.producedCount === 1 ? "" : "s"}` +
-          (dropped > 0 ? `, ${dropped} dropped by evidence verification.` : "."),
-      );
-      if (display.hiddenGroups.includes(lens.id)) toggleGroup(lens.id);
-      reloadAnnotations();
-      reloadLensRuns();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRunningLensId(null);
-    }
+    });
   }
 
   async function changeRunVisibility(runId: string, visibility: Visibility) {
@@ -336,11 +374,6 @@ export function ReaderPage() {
         }
       />
 
-      {notice && !error && (
-        <p style={{ color: "var(--text)", fontSize: 13, padding: "8px 18px", margin: 0, background: "var(--panel)", borderBottom: "1px solid var(--border)" }}>
-          {notice}
-        </p>
-      )}
       {error && (
         <p style={{ color: "crimson", fontSize: 13, padding: "8px 18px", margin: 0, background: "#FFF3F3" }}>
           {error}
@@ -356,26 +389,7 @@ export function ReaderPage() {
             currentPage={currentPage}
             onGoToPage={goToPage}
           />
-          <div ref={pdfContainerRef} style={{ flexGrow: 1, position: "relative", background: "var(--bg)", overflow: "auto" }}>
-            {noteHint && (
-              <div
-                style={{
-                  position: "sticky",
-                  top: 10,
-                  left: "50%",
-                  width: "fit-content",
-                  margin: "0 auto",
-                  zIndex: 10,
-                  background: "var(--text)",
-                  color: "#FFFFFF",
-                  fontSize: 12,
-                  padding: "7px 14px",
-                  borderRadius: 3,
-                }}
-              >
-                Select any text below, then write your note.
-              </div>
-            )}
+          <div ref={pdfContainerRef} className="pxr-pdf-region" style={{ flexGrow: 1, minHeight: 0, position: "relative", background: "var(--bg)", overflow: "hidden" }}>
             <PdfLoader
               document={pdfSource}
               workerSrc={workerUrl}
@@ -430,51 +444,58 @@ export function ReaderPage() {
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 500 }}>Annotations</span>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                {visibleAnnotations.length} / {annotations.length} SHOWN
+                {visibleAnnotations.length} / {rootAnnotations.length} SHOWN
               </span>
             </div>
-            <button
-              onClick={() => setNoteHint((v) => !v)}
-              style={{
-                height: 28,
-                padding: "0 10px",
-                fontSize: 11,
-                fontWeight: 500,
-                border: "1px solid var(--border-strong)",
-                borderRadius: 3,
-                background: noteHint ? "var(--text)" : "var(--surface)",
-                color: noteHint ? "#FFFFFF" : "var(--text)",
-              }}
-            >
-              ＋ Add note
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as "position" | "confidence" | "time")}
+                style={{
+                  height: 28,
+                  padding: "0 8px",
+                  fontSize: 11,
+                  fontWeight: 500,
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: 3,
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                }}
+              >
+                <option value="position">Position</option>
+                <option value="confidence">Confidence</option>
+                <option value="time">Time</option>
+              </select>
+            </div>
           </div>
 
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "11px 16px", borderBottom: "1px solid var(--border)" }}>
             {lenses?.map((lens) => {
               const ready = ranLensIds.has(lens.id);
-              const personal = lens.executionContext === "personal-client";
+              const personal = lens.ownerId !== null;
               return (
                 <FilterChip
                   key={lens.id}
                   label={lens.name}
+                  color={lensColors.get(lens.id)}
                   personal={personal}
                   count={countsByGroup.get(lens.id) ?? 0}
                   ready={ready}
                   active={!display.hiddenGroups.includes(lens.id)}
-                  loading={runningLensId === lens.id}
+                  loading={isLensRunning(lens.id)}
                   onClick={() => (ready ? toggleGroup(lens.id) : triggerLensRun(lens))}
                   onRerun={ready ? () => triggerLensRun(lens) : undefined}
                 />
               );
             })}
-            {/* Annotations from lenses no longer in the catalog (deleted, or a legacy id) still get a toggle. */}
+            {/* Shared personal runs and deleted lenses still get a named toggle outside the catalog. */}
             {[...countsByGroup.keys()]
-              .filter((key) => key !== HUMAN_GROUP && !lensNames.has(key))
+              .filter((key) => key !== HUMAN_GROUP && !(lenses ?? []).some(lens => lens.id === key))
               .map((key) => (
                 <FilterChip
                   key={key}
-                  label={key}
+                  label={lensNames.get(key) ?? "Lens"}
+                  color={lensColors.get(key) ?? lensColor(key)}
                   count={countsByGroup.get(key) ?? 0}
                   ready
                   active={!display.hiddenGroups.includes(key)}
@@ -492,17 +513,10 @@ export function ReaderPage() {
             />
           </div>
 
-          <DisplayControls
-            settings={display}
-            result={displayResult}
-            onChange={changeDisplay}
-            onShowEverything={() => changeDisplay({ ...display, ...SHOW_EVERYTHING })}
-          />
-
           <div style={{ flexGrow: 1, minHeight: 0, overflow: "auto", padding: "13px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
             {visibleAnnotations.length === 0 && (
               <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                {annotations.length === 0 ? "No annotations yet — run a lens or add a note." : "Everything is hidden by the current filters."}
+                {rootAnnotations.length === 0 ? "No annotations yet — run a lens or add a note." : "Everything is hidden by the current filters."}
               </p>
             )}
             {visibleAnnotations.map((a) => (
@@ -513,13 +527,54 @@ export function ReaderPage() {
                 active={a.id === activeAnnotationId}
                 onJumpTo={jumpToHighlight}
                 lensName={"agentId" in a ? lensNames.get(a.agentId) : undefined}
+                color={"agentId" in a ? lensColors.get(a.agentId) : undefined}
                 currentUserId={user?.id ?? null}
+                currentUserRole={user?.role}
+                repliesByParent={threads.byParent}
+                onCommentsChanged={reloadAnnotations}
                 onSetRunVisibility={changeRunVisibility}
               />
             ))}
           </div>
         </aside>
       </div>
+
+      {notice && !error && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 20,
+            left: 20,
+            background: "var(--panel)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: 4,
+            padding: "12px 16px",
+            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            maxWidth: 400,
+            zIndex: 1000,
+          }}
+        >
+          <span style={{ fontSize: 13, color: "var(--text)", flex: 1 }}>{notice}</span>
+          <button
+            onClick={() => setNotice(null)}
+            style={{
+                background: "transparent",
+                border: "none",
+                padding: 0,
+                cursor: "pointer",
+                color: "var(--text-muted)",
+                fontSize: 18,
+                lineHeight: 1,
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+      )}
     </div>
   );
 }

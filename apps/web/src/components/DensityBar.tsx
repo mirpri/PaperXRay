@@ -2,7 +2,7 @@ import type { PageDensity } from "../pdf/display-filter";
 
 /**
  * Page-margin density strip (README "防刷屏"): one cell per page, shaded by
- * how many visible annotations sit on it (agent in yellow, human in blue),
+ * how many visible annotations sit on it, using each Lens color and human blue,
  * so a reader can see where the marks cluster without scrolling. Click a
  * cell to jump to that page.
  */
@@ -34,6 +34,11 @@ export function DensityBar({
       {density.map((d) => {
         const total = d.agent + d.human;
         const agentShare = total === 0 ? 0 : d.agent / total;
+        let offset = 0;
+        const segments = Object.entries(d.colors ?? {}).flatMap(([color, count]) => {
+          const start = offset; offset += count / total * 100;
+          return [`${color} ${start}%`, `${color} ${offset}%`];
+        });
         const strength = total === 0 ? 0 : 0.25 + 0.75 * (total / max);
         return (
           <button
@@ -51,6 +56,7 @@ export function DensityBar({
               background:
                 total === 0
                   ? "#E2E2E2"
+                  : segments.length ? `linear-gradient(to right, ${segments.join(", ")})`
                   : `linear-gradient(to right, var(--agent) ${agentShare * 100}%, var(--human) ${agentShare * 100}%)`,
               opacity: total === 0 ? 1 : strength,
             }}

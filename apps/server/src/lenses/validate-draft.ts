@@ -1,10 +1,12 @@
 import type { LensDraft, LensScope } from "@paper-xray/contracts";
-import { LENS_SCOPES, MAX_ANNOTATIONS_LIMIT } from "@paper-xray/contracts";
+import { LENS_SCOPES, MAX_ANNOTATIONS_LIMIT, isLensColor } from "@paper-xray/contracts";
 
 /** Validates a lens definition from a request body. Returns the cleaned draft, or a message saying what's wrong. */
 export function validateLensDraft(body: unknown): { ok: true; draft: LensDraft } | { ok: false; error: string } {
   if (typeof body !== "object" || body === null) return { ok: false, error: "Expected a JSON object" };
   const b = body as Record<string, unknown>;
+
+  if (b.color !== undefined && !isLensColor(b.color)) return { ok: false, error: "color must be one of the 12 preset Lens colors" };
 
   const name = typeof b.name === "string" ? b.name.trim() : "";
   if (name.length === 0 || name.length > 120) return { ok: false, error: "name is required (1-120 characters)" };
@@ -31,9 +33,14 @@ export function validateLensDraft(body: unknown): { ok: true; draft: LensDraft }
     return { ok: false, error: `maxAnnotations must be an integer from 1 to ${MAX_ANNOTATIONS_LIMIT}` };
   }
 
+  if (b.providerId !== undefined && b.providerId !== null && (typeof b.providerId !== "string" || !/^[a-zA-Z0-9_-]{1,64}$/.test(b.providerId))) return { ok: false, error: "Invalid providerId" };
+  if (b.providerId && (typeof b.model !== "string" || !b.model.trim() || b.model.length > 255)) return { ok: false, error: "Select a model for this provider" };
+  if (!b.providerId && b.model) return { ok: false, error: "Select a provider before selecting a model" };
   return {
     ok: true,
     draft: {
+      ...(typeof b.color === "string" ? { color: b.color.toUpperCase() } : {}),
+      ...(b.providerId !== undefined ? { providerId: b.providerId as string | null, model: typeof b.model === "string" ? b.model.trim() : null } : {}),
       name,
       description,
       instruction,
