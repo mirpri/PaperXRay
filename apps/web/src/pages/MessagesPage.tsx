@@ -12,6 +12,9 @@ const messageDescriptions: Record<AnnotationNotification["kind"], string> = {
   downvote: "downvoted your annotation",
   cancel_upvote: "removed an upvote from your annotation",
   cancel_downvote: "removed a downvote from your annotation",
+  collection_shared: "shared a collection with you",
+  collection_left: "left your collection",
+  membership_requested: "requested to join the organization",
 };
 
 export function MessagesPage() {
@@ -78,18 +81,20 @@ export function MessagesPage() {
         {loading && messages.length === 0 ? <p role="status">Loading messages…</p> : messages.length === 0 && !error ? <p className="pxr-message-empty">No messages yet.</p> : null}
         <ul className="pxr-message-list" aria-busy={loading}>
           {messages.map(message => {
-            const url = `/documents/${message.docId}?comment=${encodeURIComponent(message.targetId)}`;
+            const isCollectionMessage = message.kind === "collection_shared" || message.kind === "collection_left";
+            const isMembershipMessage = message.kind === "membership_requested";
+            const url = isMembershipMessage ? "/admin?section=users" : isCollectionMessage ? `/collections/${message.collectionId}` : `/documents/${message.docId}?comment=${encodeURIComponent(message.targetId)}`;
             return <li key={message.id} className={`pxr-message${message.readAt ? "" : " pxr-message-unread"}`}>
               <div className="pxr-message-header">
                 <UserIdentity name={message.actorName} />
                 <time dateTime={message.createdAt} title={new Date(message.createdAt).toLocaleString()}>{new Date(message.createdAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</time>
                 {!message.readAt && <span className="pxr-unread-dot" aria-label="Unread" />}
               </div>
-              <p className="pxr-message-context">{messageDescriptions[message.kind]} · {message.documentTitle ?? "Untitled paper"}</p>
+              <p className="pxr-message-context">{messageDescriptions[message.kind]}{!isMembershipMessage && <> · {isCollectionMessage ? `“${message.documentTitle}”` : message.documentTitle ?? "Untitled paper"}</>}</p>
               {message.kind === "reply" && <blockquote>{message.parentPreview || "[Comment deleted]"}</blockquote>}
               <p className="pxr-message-preview">{message.preview}</p>
               <div className="pxr-message-footer">
-                <Link to={url} onClick={event => void open(event, message, url)} onAuxClick={event => { if (event.button === 1) void read(message).catch(err => setError(String(err))); }}>{message.kind === "reply" ? "View reply" : "View annotation"} →</Link>
+                <Link to={url} onClick={event => void open(event, message, url)} onAuxClick={event => { if (event.button === 1) void read(message).catch(err => setError(String(err))); }}>{isMembershipMessage ? "Review member" : isCollectionMessage ? "View collection" : message.kind === "reply" ? "View reply" : "View annotation"} →</Link>
                 {!message.readAt && <button type="button" onClick={() => { void read(message).catch(err => setError(String(err))); }}>Mark read</button>}
               </div>
             </li>;

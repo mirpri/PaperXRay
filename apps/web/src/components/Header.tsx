@@ -86,6 +86,7 @@ export function Header({ left, right }: { left?: ReactNode; right?: ReactNode })
             Messages
             {unreadCount > 0 && <><span className="pxr-unread-dot" aria-hidden="true" /><span className="mono pxr-unread-count" aria-hidden="true">{unreadCount}</span></>}
           </Link>
+          <Link to="/collections">Collections</Link>
           <Link to="/lenses">Lenses</Link>
           <Link to="/admin">{user.role === "admin" ? "Admin" : "Settings"}</Link>
         </nav>

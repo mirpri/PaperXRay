@@ -1,3 +1,4 @@
+import type { DocumentSummary } from "@paper-xray/contracts";
 import { useEffect } from "react";
 import { io } from "socket.io-client";
 
@@ -10,17 +11,17 @@ const SOCKET_BASE = import.meta.env.VITE_SOCKET_BASE ?? "http://localhost:3001";
  * apps/server/src/realtime/socket.ts). Minimal wiring — no
  * presence/reconnect-catchup yet, that's W5 per docs/02-decisions.md #10.
  */
-export function useDocumentSocket(docId: string | null, onAnnotationsChanged: () => void): void {
+export function useDocumentSocket(docId: string | null, onAnnotationsChanged: () => void, onDocumentChanged?: (document: DocumentSummary) => void): void {
   useEffect(() => {
     if (!docId) return;
 
     const socket = io(SOCKET_BASE, { withCredentials: true });
-    socket.emit("join", docId);
+    socket.on("connect", () => socket.emit("join", docId));
     socket.on("annotations:changed", onAnnotationsChanged);
+    if (onDocumentChanged) socket.on("document:changed", onDocumentChanged);
 
     return () => {
       socket.disconnect();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [docId]);
+  }, [docId, onAnnotationsChanged, onDocumentChanged]);
 }

@@ -1,7 +1,8 @@
 import { Router, type Router as RouterType } from "express";
 import { requireAuth } from "../auth/middleware.js";
 import { config } from "../config.js";
-import { getAccountManagementUrl, getSsoConfig, upsertUserFromSso } from "../db/repositories.js";
+import { getAccountManagementUrl, getSsoConfig, listUsers, upsertUserFromSso } from "../db/repositories.js";
+import { broadcastNotificationsChanged } from "../realtime/socket.js";
 import { codeChallengeFromVerifier, generateCodeVerifier, generateState } from "../auth/pkce.js";
 import { OAUTH_STATE_COOKIE_NAME, readAndClearOAuthStateCookie, setOAuthStateCookie } from "../auth/oauth-state.js";
 import { clearSessionCookie, setSessionCookie } from "../auth/session.js";
@@ -123,6 +124,9 @@ authRouter.get("/auth/callback", async (req, res, next) => {
       isBootstrapAdmin,
     });
 
+    if (user.status === "pending") {
+      for (const admin of await listUsers()) if (admin.role === "admin" && admin.status !== "pending") broadcastNotificationsChanged(admin.id);
+    }
     setSessionCookie(res, user.id);
     res.redirect(config.webOrigin);
   } catch (err) {

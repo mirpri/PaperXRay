@@ -1,12 +1,43 @@
 import { Router, type Router as RouterType } from "express";
 import { requireRole } from "../auth/middleware.js";
 import type { Role } from "@paper-xray/contracts";
-import { getSsoConfig, getSsoConfigPublic, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
+import { approveMembership, deleteUserAccount, getSsoConfig, getSsoConfigPublic, getUserDeletionPreview, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
+import { broadcastNotificationsChanged, disconnectDeletedUser } from "../realtime/socket.js";
 
 
 const ROLES: readonly Role[] = ["admin", "curator", "member"];
 
 export const adminRouter: RouterType = Router();
+
+adminRouter.get("/admin/users/:id/deletion-preview", requireRole("admin"), async (req, res, next) => {
+  try {
+    if (req.params.id === req.user!.id) { res.status(400).json({ error: "You cannot delete your own account" }); return; }
+    const preview = await getUserDeletionPreview(req.params.id);
+    if (!preview) { res.status(404).json({ error: "User not found" }); return; }
+    res.json(preview);
+  } catch (err) { next(err); }
+});
+
+adminRouter.delete("/admin/users/:id", requireRole("admin"), async (req, res, next) => {
+  try {
+    const result = await deleteUserAccount(req.user!.id, req.params.id);
+    if (result === "not-found") { res.status(404).json({ error: "User not found" }); return; }
+    if (result === "self") { res.status(400).json({ error: "You cannot delete your own account" }); return; }
+    if (result === "last-admin") { res.status(409).json({ error: "Cannot delete the last active administrator" }); return; }
+    disconnectDeletedUser(req.params.id);
+    for (const admin of await listUsers()) if (admin.role === "admin" && admin.status !== "pending") broadcastNotificationsChanged(admin.id);
+    res.status(204).end();
+  } catch (err) { next(err); }
+});
+
+adminRouter.post("/admin/users/:id/approve", requireRole("admin"), async (req, res, next) => {
+  try {
+    const user = await approveMembership(req.params.id);
+    if (!user) { res.status(404).json({ error: "User not found" }); return; }
+    for (const admin of await listUsers()) if (admin.role === "admin" && admin.status !== "pending") broadcastNotificationsChanged(admin.id);
+    res.json({ user });
+  } catch (err) { next(err); }
+});
 
 /**
  * Admin-panel SSO settings (docs/02-decisions.md #11): lets an admin point

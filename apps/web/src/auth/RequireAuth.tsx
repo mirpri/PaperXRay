@@ -10,7 +10,7 @@ import { useAuth } from "./AuthContext";
  * "browse without an account" mode.
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, loading, refresh, logout } = useAuth();
 
   if (loading) {
     return <div style={{ minHeight: "100svh", background: "var(--bg)" }} />;
@@ -68,5 +68,18 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     );
   }
 
+  if (user.status === "pending") {
+    return <div style={{ minHeight: "100svh", display: "grid", placeItems: "center", padding: 24 }}>
+      <div style={{ maxWidth: 400, textAlign: "center" }}>
+        <Logo size={40} />
+        <h1 style={{ fontFamily: "var(--font-serif)", fontSize: 22 }}>Awaiting approval</h1>
+        <p style={{ color: "var(--text-muted)" }}>Your request to join has been sent to the administrators. You can enter once an administrator approves it.</p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 20 }}>
+          <button type="button" className="pxr-btn pxr-btn-primary" onClick={refresh}>Check approval</button>
+          <button type="button" className="pxr-btn" onClick={() => void logout()}>Log out</button>
+        </div>
+      </div>
+    </div>;
+  }
   return <>{children}</>;
 }

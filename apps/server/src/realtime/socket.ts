@@ -1,8 +1,10 @@
+import type { DocumentSummary } from "@paper-xray/contracts";
 import type { Server as HttpServer } from "node:http";
 import { Server as SocketIoServer } from "socket.io";
 import { config } from "../config.js";
 import { SESSION_COOKIE_NAME } from "../auth/session.js";
 import { verify } from "../auth/signed-value.js";
+import { findUserById } from "../db/repositories.js";
 
 /** Reads one cookie out of a raw `Cookie:` header without pulling cookie-parser into socket.io's middleware chain. */
 function readCookie(header: string | undefined, name: string): string | undefined {
@@ -33,15 +35,19 @@ export function initSocket(server: HttpServer): SocketIoServer {
   // Same session cookie as the HTTP API — an org-only deployment
   // (docs/02-decisions.md #3) shouldn't let anonymous clients watch which
   // documents are being annotated.
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
+    try {
     const raw = readCookie(socket.handshake.headers.cookie, SESSION_COOKIE_NAME);
     const userId = verify(raw, config.session.secret);
     if (!userId) {
       next(new Error("Login required"));
       return;
     }
+    const user = await findUserById(userId);
+    if (!user || user.status === "pending") { next(new Error("Membership approval required")); return; }
     socket.data.userId = userId;
     next();
+    } catch (err) { next(err instanceof Error ? err : new Error("Authentication failed")); }
   });
 
   io.on("connection", (socket) => {
@@ -66,4 +72,16 @@ export function broadcastAnnotationsChanged(docId: string): void {
 /** User-specific inbox updates; the room is assigned from the signed session. */
 export function broadcastNotificationsChanged(userId: string): void {
   io?.to(`user:${userId}`).emit("notifications:changed");
+}
+
+/** Immediately invalidates every live tab after an administrator removes an account. */
+export function disconnectDeletedUser(userId: string): void {
+  const room = io?.in(`user:${userId}`);
+  room?.emit("account:deleted");
+  room?.disconnectSockets(true);
+}
+
+/** Metadata updates do not require clients to reload PDF text or annotations. */
+export function broadcastDocumentChanged(document: DocumentSummary): void {
+  io?.to(roomFor(document.id)).emit("document:changed", document);
 }

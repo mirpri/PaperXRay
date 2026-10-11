@@ -114,3 +114,19 @@ Lens 配置页可从系统 12 种预设颜色中选择，组织与个人 Lens �
 Admin 的 SSO 设置区提供 Import JSON / Export JSON。配置仍保存在数据库。导出下载当前已保存的 `sso-config.json`，包含端点、clientId、clientSecret、scopes 和 accountManagementUrl；`GET /api/admin/sso-config/export` 仅管理员可访问，响应禁止缓存。普通设置读取仍只返回 hasClientSecret。
 
 导入会校验 JSON 后填入表单，点击 Save SSO settings 才写入数据库。clientSecret 缺失时保留已有密钥，null 或空字符串会清空密钥。accountManagementUrl 可为字符串或 null。导出不包含尚未保存的表单改动，也不包含部署环境中的 redirect URI、ADMIN_EMAILS 或 session secret。
+
+## 文章标题
+
+文档显示名称使用 `documents.title`（VARCHAR(500)），接口字段为 `title`，不再保存 `original_filename`。首次上传或 URL 导入时，复用 PDF.js 解析：先读取有效元数据标题，再根据首页字号和位置识别标题并合并多行，无法识别则用上传文件名或导入建议文件名兜底。无需调用 Lens 或模型。重复导入相同内容直接返回已有记录，保留管理员修改过的标题。
+
+新数据库直接 `pnpm db:install`。已有数据库运行一次 `pnpm db:titles`，将旧列改名并保留已有显示名称，不重新解析历史文件；重复运行不会覆盖现有标题。升级后重启服务端并刷新前端。
+
+管理员在 Library 条目悬停时点击铅笔编辑标题，触屏设备直接显示入口。Enter 保存、Escape 取消，未改动时失焦关闭。`PATCH /api/documents/:id` 接收 `{ title: string }`，服务端仅允许 admin，标题去除首尾空白后须为 1–500 字符。修改同步到阅读页标题和后续加载的消息列表，不影响 PDF 文件、锚点或批注。
+
+## 文献库搜索、排序与分页
+
+Library 按标题搜索（300ms 输入延迟），支持导入时间新/旧、标题升/降序、页数多/少排序。每页默认 20 篇，可选择 50 或 100 篇；搜索、排序、页码、每页数量保存在网址参数中。搜索或排序改变时回到第一页，管理员修改标题后重新查询，以保持搜索结果和排序正确。切换条件时取消旧请求，避免迟到响应覆盖新结果；加载失败显示重试入口。
+
+`GET /api/documents` 接收 `q`、`sort`、`page`、`pageSize`，返回 `{ documents, total, page, pageSize, totalPages }`。服务端按元数据筛选、计数并通过 LIMIT/OFFSET 分页，不加载全文或 CharMap；搜索按字面值处理 `%`、`_` 等字符，排序字段仅允许预定义值。同值按文档 ID 排序，越界页码回到最后有效页。标题包含搜索会扫描标题元数据，不做全文检索。
+
+新数据库直接 `pnpm db:install` 包含文献库排序索引；已有数据库先完成标题字段转换，再执行 `pnpm db:library`，仅补充缺失的导入时间、标题、页数索引，保留现有文档。

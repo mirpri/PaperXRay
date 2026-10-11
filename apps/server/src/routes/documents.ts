@@ -6,7 +6,7 @@ import type { AgentAnnotation, Document, LensSpec, Node as IrNode } from "@paper
 import { sanitizeLensItems } from "@paper-xray/contracts";
 import multer from "multer";
 import { config } from "../config.js";
-import { extractPages } from "../extraction/extract-pages.js";
+import { extractPdf } from "../extraction/extract-pages.js";
 import { buildDocument } from "../reassembly/build-document.js";
 import { runOrgLens } from "../lenses/run-org-lens.js";
 import { lensItemsToCandidates } from "../lenses/run-model-lens.js";
@@ -30,6 +30,7 @@ import {
   setAgentRunVisibility,
   findAgentRunOwner,
 } from "../db/repositories.js";
+import { parseDocumentListQuery } from "./document-list-query.js";
 import { withVoteSummaries } from "../db/votes.js";
 import { broadcastAnnotationsChanged } from "../realtime/socket.js";
 
@@ -51,20 +52,20 @@ const upload = multer({
  * Shared by upload and URL import: same bytes = same document, however or
  * whoever brought them in (docs/02-decisions.md #2).
  */
-async function ingestPdf(bytes: Buffer, originalFilename: string): Promise<{ document: Document; deduped: boolean }> {
+export async function ingestPdf(bytes: Buffer, originalFilename: string): Promise<{ document: Document; deduped: boolean }> {
   const contentHash = createHash("sha256").update(bytes).digest("hex");
 
   const existing = await findDocumentByContentHash(contentHash);
   if (existing) return { document: existing, deduped: true };
 
   // pdfjs-dist rejects Node's Buffer (a Uint8Array subclass) outright; needs a plain Uint8Array.
-  const pages = await extractPages(new Uint8Array(bytes));
+  const { pages, title } = await extractPdf(new Uint8Array(bytes), originalFilename);
   const { normalizedText, charMap, nodes } = buildDocument(pages, contentHash);
   // The database record becomes visible only after the PDF and parsed artifacts exist.
   await writePdf(contentHash, bytes);
   const { document } = await createDocumentWithNodes({
     contentHash,
-    originalFilename,
+    title,
     pageCount: pages.length,
     normalizedText,
     charMap,
@@ -124,9 +125,12 @@ documentsRouter.post("/documents/import", requireAuth, async (req, res, next) =>
   }
 });
 
-documentsRouter.get("/documents", requireAuth, async (_req, res, next) => {
+documentsRouter.get("/documents", requireAuth, async (req, res, next) => {
+  let query;
+  try { query = parseDocumentListQuery(req.query); }
+  catch (err) { res.status(400).json({ error: err instanceof Error ? err.message : "Invalid library query" }); return; }
   try {
-    res.json({ documents: await listDocuments() });
+    res.json(await listDocuments(query));
   } catch (err) {
     next(err);
   }

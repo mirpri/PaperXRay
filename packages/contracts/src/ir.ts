@@ -27,8 +27,8 @@ export interface Document {
   id: string;
   /** SHA-256 of the raw PDF bytes. Doubles as the document identity (docs/02-decisions.md #2) — same bytes, same document, regardless of who uploaded it or how. */
   contentHash: string;
-  /** Filename of whoever uploaded it first. Display-only (e.g. the library page) — never part of document identity. */
-  originalFilename: string | null;
+  /** Display title, extracted on first import and editable by administrators; never part of document identity. */
+  title: string | null;
   pageCount: number;
   /** Full reassembled document text, in reading order, used as the coordinate space for every CharRange in the document. */
   normalizedText: string;
@@ -39,7 +39,7 @@ export interface Document {
 export interface DocumentSummary {
   id: string;
   contentHash: string;
-  originalFilename: string | null;
+  title: string | null;
   pageCount: number;
   createdAt: string;
 }

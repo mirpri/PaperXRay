@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { PdfHighlighter, PdfLoader, type PdfHighlighterUtils } from "react-pdf-highlighter-extended";
 import workerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
-import type { Annotation, CharMap, Document, LensSpec, Node as IrNode, Visibility } from "@paper-xray/contracts";
+import type { Annotation, CharMap, Document, DocumentSummary, LensSpec, Node as IrNode, Visibility } from "@paper-xray/contracts";
 import { lensColor } from "@paper-xray/contracts";
+import { ArrowUp, ArrowDown } from "lucide-react";
 import {
   createHumanAnnotation,
   documentFileUrl,
@@ -51,7 +52,7 @@ const MIN_ASIDE_WIDTH = 260;
 const MAX_ASIDE_WIDTH = 640;
 
 function titleFor(doc: Document): string {
-  return doc.originalFilename ?? `Untitled (${doc.contentHash.slice(0, 8)})`;
+  return doc.title ?? `Untitled (${doc.contentHash.slice(0, 8)})`;
 }
 
 export function ReaderPage() {
@@ -116,7 +117,10 @@ export function ReaderPage() {
     reloadAnnotations();
     reloadLensRuns();
   }, [reloadAnnotations, reloadLensRuns]);
-  useDocumentSocket(docId, onRemoteChange);
+  const onDocumentChanged = useCallback((updated: DocumentSummary) => {
+    setDoc(current => current?.id === updated.id ? { ...current, title: updated.title } : current);
+  }, []);
+  useDocumentSocket(docId, onRemoteChange, onDocumentChanged);
 
   function toggleGroup(key: string) {
     const hidden = display.hiddenGroups.includes(key)
@@ -128,26 +132,34 @@ export function ReaderPage() {
   const threads = useMemo(() => commentThreads(annotations), [annotations]);
   const rootAnnotations = threads.roots;
   const displayResult = useMemo(() => applyDisplayFilter(rootAnnotations, display), [rootAnnotations, display]);
-  const [sortBy, setSortBy] = useState<"position" | "confidence" | "time">("position");
+  const [sortBy, setSortBy] = useState<"position" | "confidence" | "time" | "upvote">("position");
+  const [sortAsc, setSortAsc] = useState(true);
   const visibleAnnotations = useMemo(() => {
     const sorted = [...displayResult.visible];
+    const direction = sortAsc ? 1 : -1;
     switch (sortBy) {
       case "position":
-        return sorted.sort((a, b) => a.anchor.charRange.start - b.anchor.charRange.start);
+        return sorted.sort((a, b) => direction * (a.anchor.charRange.start - b.anchor.charRange.start));
       case "confidence":
         return sorted.sort((a, b) => {
           const aConf = "confidence" in a ? a.confidence : 0;
           const bConf = "confidence" in b ? b.confidence : 0;
-          return bConf - aConf; // descending
+          return direction * (aConf - bConf);
         });
       case "time":
         return sorted.sort((a, b) => {
           const aTime = new Date(a.createdAt).getTime();
           const bTime = new Date(b.createdAt).getTime();
-          return bTime - aTime; // newest first
+          return direction * (aTime - bTime);
         });
-    }
-  }, [displayResult.visible, sortBy]);
+        case "upvote":
+          return sorted.sort((a, b) => {
+            const aVotes = a.votes?.upvotes ?? 0;
+            const bVotes = b.votes?.upvotes ?? 0;
+            return direction * (aVotes - bVotes);
+          });
+      }
+    }, [displayResult.visible, sortBy, sortAsc]);
 
   const fileUrl = documentFileUrl(docId);
   // The file route requires the session cookie; memoized so PdfLoader doesn't see a new object (and reload the PDF) every render.
@@ -447,25 +459,45 @@ export function ReaderPage() {
                 {visibleAnnotations.length} / {rootAnnotations.length} SHOWN
               </span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as "position" | "confidence" | "time")}
+                onChange={e => setSortBy(e.target.value as "position" | "confidence" | "time" | "upvote")}
                 style={{
-                  height: 28,
-                  padding: "0 8px",
-                  fontSize: 11,
-                  fontWeight: 500,
+                  height: 24,
+                  padding: "0 6px",
                   border: "1px solid var(--border-strong)",
                   borderRadius: 3,
                   background: "var(--surface)",
                   color: "var(--text)",
+                  fontSize: 11,
+                  cursor: "pointer",
                 }}
               >
                 <option value="position">Position</option>
                 <option value="confidence">Confidence</option>
                 <option value="time">Time</option>
+                <option value="upvote">Upvotes</option>
               </select>
+              <button
+                onClick={() => setSortAsc(!sortAsc)}
+                title={sortAsc ? "Ascending" : "Descending"}
+                style={{
+                  width: 24,
+                  height: 24,
+                  padding: 0,
+                  border: "1px solid var(--border-strong)",
+                  borderRadius: 3,
+                  background: "var(--surface)",
+                  color: "var(--text)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                {sortAsc ? <ArrowUp size={15} strokeWidth={1.75} /> : <ArrowDown size={15} strokeWidth={1.75} />}
+              </button>
             </div>
           </div>
 

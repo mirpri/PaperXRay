@@ -112,7 +112,7 @@ humanAnnotationsRouter.patch("/documents/:docId/human-annotations/:id", requireA
     }
 
     broadcastAnnotationsChanged(req.params.docId);
-    broadcastNotificationsChanged(existing.authorId);
+    if (existing.authorId) broadcastNotificationsChanged(existing.authorId);
     if (existing.parentId) { const recipient = await findNotificationRecipient(existing.id); if (recipient) broadcastNotificationsChanged(recipient); }
     res.json({ annotation: result.current });
   } catch (err) {
@@ -145,7 +145,7 @@ humanAnnotationsRouter.delete("/documents/:docId/human-annotations/:id", require
     }
 
     broadcastAnnotationsChanged(req.params.docId);
-    broadcastNotificationsChanged(existing.authorId);
+    if (existing.authorId) broadcastNotificationsChanged(existing.authorId);
     if (existing.parentId) { const recipient = await findNotificationRecipient(existing.id); if (recipient) broadcastNotificationsChanged(recipient); }
     res.status(204).end();
   } catch (err) {

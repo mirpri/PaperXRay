@@ -4,6 +4,12 @@ import type {
   CharMap,
   Document,
   DocumentSummary,
+  DocumentListQuery,
+  DocumentPage,
+  CollectionPage,
+  CollectionSummary,
+  CollectionMember,
+  CollectionUserOption,
   LensDraft,
   LensOutputItem,
   LensSpec,
@@ -93,13 +99,73 @@ export async function importDocumentFromUrl(url: string): Promise<Document> {
   return body.document;
 }
 
-export async function fetchDocuments(): Promise<DocumentSummary[]> {
-  const res = await fetch(`${API_BASE}/documents`, { credentials: "include" });
-  if (!res.ok) {
-    throw new Error(`Failed to load documents: ${res.status}`);
-  }
-  const body = (await res.json()) as { documents: DocumentSummary[] };
-  return body.documents;
+export async function fetchCollections(): Promise<CollectionSummary[]> {
+  const res = await fetch(`${API_BASE}/collections`, { credentials: "include" });
+  return (await jsonOrThrow<{ collections: CollectionSummary[] }>(res, "Failed to load collections")).collections;
+}
+
+export async function createCollection(input: { name: string; description: string }): Promise<CollectionSummary> {
+  const res = await sendJson("POST", "/collections", input);
+  return (await jsonOrThrow<{ collection: CollectionSummary }>(res, "Failed to create collection")).collection;
+}
+
+export async function fetchCollection(id: string, query: DocumentListQuery, signal?: AbortSignal): Promise<CollectionPage> {
+  const params = new URLSearchParams({ sort: query.sort, page: String(query.page), pageSize: String(query.pageSize) });
+  if (query.search) params.set("q", query.search);
+  const res = await fetch(`${API_BASE}/collections/${encodeURIComponent(id)}?${params}`, { credentials: "include", signal });
+  return jsonOrThrow<CollectionPage>(res, "Failed to load collection");
+}
+
+export async function saveCollection(id: string, input: { name: string; description: string }): Promise<CollectionSummary> {
+  const res = await sendJson("PUT", `/collections/${encodeURIComponent(id)}`, input);
+  return (await jsonOrThrow<{ collection: CollectionSummary }>(res, "Failed to update collection")).collection;
+}
+
+export async function deleteCollection(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/collections/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to delete collection");
+}
+
+export async function fetchCollectionUsers(id: string): Promise<CollectionUserOption[]> {
+  const res = await fetch(`${API_BASE}/collections/${encodeURIComponent(id)}/users`, { credentials: "include" });
+  return (await jsonOrThrow<{ users: CollectionUserOption[] }>(res, "Failed to load users")).users;
+}
+
+export async function saveCollectionMembers(id: string, userIds: string[]): Promise<CollectionMember[]> {
+  const res = await sendJson("PUT", `/collections/${encodeURIComponent(id)}/members`, { userIds });
+  return (await jsonOrThrow<{ members: CollectionMember[] }>(res, "Failed to update sharing")).members;
+}
+
+export async function leaveCollection(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/collections/${encodeURIComponent(id)}/membership/me`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to leave collection");
+}
+
+export async function addDocumentToCollection(id: string, docId: string): Promise<boolean> {
+  const res = await sendJson("POST", `/collections/${encodeURIComponent(id)}/documents`, { docId });
+  return (await jsonOrThrow<{ added: boolean }>(res, "Failed to add paper")).added;
+}
+
+export async function removeDocumentFromCollection(id: string, docId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/collections/${encodeURIComponent(id)}/documents/${encodeURIComponent(docId)}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to remove paper");
+}
+
+export async function importDocumentToCollection(id: string, url: string): Promise<{ document: Document; added: boolean }> {
+  const res = await sendJson("POST", `/collections/${encodeURIComponent(id)}/import`, { url });
+  return jsonOrThrow<{ document: Document; added: boolean }>(res, "Failed to import paper");
+}
+
+export async function fetchDocuments(query: DocumentListQuery, signal?: AbortSignal): Promise<DocumentPage> {
+  const params = new URLSearchParams({ sort: query.sort, page: String(query.page), pageSize: String(query.pageSize) });
+  if (query.search) params.set("q", query.search);
+  const res = await fetch(`${API_BASE}/documents?${params}`, { credentials: "include", signal });
+  return jsonOrThrow<DocumentPage>(res, "Failed to load documents");
+}
+
+export async function updateDocumentTitle(docId: string, title: string): Promise<DocumentSummary> {
+  const res = await sendJson("PATCH", `/documents/${encodeURIComponent(docId)}`, { title });
+  return (await jsonOrThrow<{ document: DocumentSummary }>(res, "Failed to update title")).document;
 }
 
 export async function fetchDocument(docId: string): Promise<Document> {
@@ -204,6 +270,29 @@ export async function fetchUsers(): Promise<User[]> {
 export async function setUserRole(userId: string, role: Role): Promise<User> {
   const res = await sendJson("PATCH", `/admin/users/${userId}/role`, { role });
   return (await jsonOrThrow<{ user: User }>(res, "Failed to change role")).user;
+}
+
+export async function approveUser(userId: string): Promise<User> {
+  const res = await sendJson("POST", `/admin/users/${encodeURIComponent(userId)}/approve`, {});
+  return (await jsonOrThrow<{ user: User }>(res, "Failed to approve member")).user;
+}
+
+export interface UserDeletionPreview {
+  user: User;
+  ownedCollections: number;
+  annotations: number;
+  personalLenses: number;
+  personalProviders: number;
+  privateLensAnnotations: number;
+  sharedLensAnnotations: number;
+}
+export async function fetchUserDeletionPreview(userId: string): Promise<UserDeletionPreview> {
+  const res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}/deletion-preview`, { credentials: "include", cache: "no-store" });
+  return jsonOrThrow<UserDeletionPreview>(res, "Failed to load deletion preview");
+}
+export async function deleteUser(userId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/users/${encodeURIComponent(userId)}`, { method: "DELETE", credentials: "include" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to delete user");
 }
 
 export const ACCOUNT_MANAGEMENT_URL_CHANGED = "pxr:account-management-url-changed";

@@ -28,6 +28,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const deleted = () => setUser(null);
+    window.addEventListener("pxr:account-deleted", deleted);
+    return () => window.removeEventListener("pxr:account-deleted", deleted);
+  }, []);
+
   async function logout() {
     await apiLogout();
     setUser(null);

@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { io } from "socket.io-client";
-import { fetchUnreadNotificationCount } from "./api";
+import { fetchMe, fetchUnreadNotificationCount } from "./api";
 import { useAuth } from "./auth/AuthContext";
 const SOCKET_BASE = import.meta.env.VITE_SOCKET_BASE ?? "http://localhost:3001";
 const NotificationContext = createContext<{ unreadCount: number; revision: number; refresh: () => Promise<void> } | null>(null);
@@ -27,6 +27,12 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     const changed = () => { setRevision(value => value + 1); void refresh(); };
     const socket = io(SOCKET_BASE, { withCredentials: true });
     socket.on("notifications:changed", changed);
+    socket.on("account:deleted", () => window.dispatchEvent(new Event("pxr:account-deleted")));
+    socket.on("disconnect", reason => {
+      if (reason === "io server disconnect") void fetchMe().then(user => {
+        if (!user) window.dispatchEvent(new Event("pxr:account-deleted"));
+      }).catch(() => undefined);
+    });
     socket.on("connect", changed);
     const focused = () => { if (document.visibilityState === "visible") changed(); };
     document.addEventListener("visibilitychange", focused);

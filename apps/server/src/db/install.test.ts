@@ -37,9 +37,9 @@ describe("fresh database installation", () => {
     expect(mocks.changeUser).toHaveBeenCalledWith({ database: "test`database" });
     expect(mocks.query.mock.calls[1][0]).toBe("SHOW FULL TABLES");
     const schema = mocks.query.mock.calls[2][0] as string;
-    expect(schema.match(/CREATE TABLE /g)).toHaveLength(12);
+    expect(schema.match(/CREATE TABLE /g)).toHaveLength(17);
     expect(schema).not.toMatch(/ALTER TABLE|_migrations|normalized_text|char_map/);
-    for (const column of ["original_filename", "sso_sub", "owner_id", "share_runs_with_org", "parent_kind", "thread_root_id", "thread_root_kind", "idx_human_annotations_parent", "color VARCHAR(7)"]) {
+    for (const column of ["title", "sso_sub", "owner_id", "share_runs_with_org", "parent_kind", "thread_root_id", "thread_root_kind", "idx_human_annotations_parent", "color VARCHAR(7)"]) {
       expect(schema).toContain(column);
     }
     expect(mocks.execute).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO sso_config"), ["client-id", "client-secret"]);

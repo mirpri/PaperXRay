@@ -6,6 +6,8 @@ import type {
   CharMap,
   Document,
   DocumentSummary,
+  DocumentListQuery,
+  DocumentPage,
   HumanAnnotation,
   Node as IrNode,
   Role,
@@ -13,14 +15,14 @@ import type {
   User,
   Visibility,
 } from "@paper-xray/contracts";
-import { lensColor } from "@paper-xray/contracts";
+import { lensColor, DEFAULT_DOCUMENT_QUERY } from "@paper-xray/contracts";
 import { pool } from "./pool.js";
 import { readCharMap, readNormalizedText, writeDocumentContent } from "../storage/document-files.js";
 
 interface DocumentRow extends RowDataPacket {
   id: string;
   content_hash: string;
-  original_filename: string | null;
+  title: string | null;
   page_count: number;
   created_at: Date;
 }
@@ -29,7 +31,7 @@ async function toDocument(row: DocumentRow): Promise<Document> {
   return {
     id: row.id,
     contentHash: row.content_hash,
-    originalFilename: row.original_filename,
+    title: row.title,
     pageCount: row.page_count,
     normalizedText: await readNormalizedText(row.content_hash),
     createdAt: row.created_at.toISOString(),
@@ -40,25 +42,50 @@ function toDocumentSummary(row: DocumentRow): DocumentSummary {
   return {
     id: row.id,
     contentHash: row.content_hash,
-    originalFilename: row.original_filename,
+    title: row.title,
     pageCount: row.page_count,
     createdAt: row.created_at.toISOString(),
   };
 }
 
-/** Library listing reads metadata only; full text and CharMap live in file storage. */
-export async function listDocuments(): Promise<DocumentSummary[]> {
+const DOCUMENT_ORDER: Record<DocumentListQuery["sort"], string> = {
+  newest: "created_at DESC, id DESC", oldest: "created_at ASC, id ASC",
+  "title-asc": "title ASC, id ASC", "title-desc": "title DESC, id DESC",
+  "pages-asc": "page_count ASC, id ASC", "pages-desc": "page_count DESC, id DESC",
+};
+
+/** Search and paginate metadata in SQL; never load every PDF's parsed content. */
+export async function listDocuments(query: DocumentListQuery = DEFAULT_DOCUMENT_QUERY): Promise<DocumentPage> {
+  // Treat LIKE wildcard characters as literal search text, using an explicit escape.
+  const where = query.search ? " WHERE title LIKE ? ESCAPE '!'" : "";
+  const values = query.search ? [`%${query.search.replace(/[!%_]/g, "!$&")}%`] : [];
+  const [counts] = await pool.query<RowDataPacket[]>(`SELECT COUNT(*) AS total FROM documents${where}`, values);
+  const total = Number(counts[0].total);
+  const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
+  const page = Math.min(query.page, totalPages);
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT id, content_hash, original_filename, page_count, created_at FROM documents ORDER BY created_at DESC",
+    `SELECT id, content_hash, title, page_count, created_at FROM documents${where} ORDER BY ${DOCUMENT_ORDER[query.sort]} LIMIT ? OFFSET ?`,
+    [...values, query.pageSize, (page - 1) * query.pageSize],
   );
-  return rows.map(toDocumentSummary);
+  return { documents: rows.map(toDocumentSummary), total, page, pageSize: query.pageSize, totalPages };
+}
+
+/** Updating a display title never reads or changes PDF/text artifacts. */
+export async function updateDocumentTitle(id: string, title: string): Promise<DocumentSummary | null> {
+  await pool.query("UPDATE documents SET title = ? WHERE id = ?", [title, id]);
+  // Read even when affectedRows is zero: saving the same title is valid.
+  const [rows] = await pool.query<DocumentRow[]>(
+    "SELECT id, content_hash, title, page_count, created_at FROM documents WHERE id = ? LIMIT 1",
+    [id],
+  );
+  return rows[0] ? toDocumentSummary(rows[0]) : null;
 }
 
 export async function findDocumentByContentHash(
   contentHash: string,
 ): Promise<Document | null> {
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT id, content_hash, original_filename, page_count, created_at FROM documents WHERE content_hash = ? LIMIT 1",
+    "SELECT id, content_hash, title, page_count, created_at FROM documents WHERE content_hash = ? LIMIT 1",
     [contentHash],
   );
   return rows[0] ? toDocument(rows[0]) : null;
@@ -66,7 +93,7 @@ export async function findDocumentByContentHash(
 
 export async function findDocumentById(id: string): Promise<Document | null> {
   const [rows] = await pool.query<DocumentRow[]>(
-    "SELECT id, content_hash, original_filename, page_count, created_at FROM documents WHERE id = ? LIMIT 1",
+    "SELECT id, content_hash, title, page_count, created_at FROM documents WHERE id = ? LIMIT 1",
     [id],
   );
   return rows[0] ? toDocument(rows[0]) : null;
@@ -162,7 +189,7 @@ export async function getCharMapForDocument(id: string): Promise<CharMap | null>
 /** Creates the document and its IR Node tree (as produced by the reassembly layer, see ../reassembly/build-document.ts) in one transaction. Node ids/charRanges are already computed by the caller — this just persists them. */
 export async function createDocumentWithNodes(params: {
   contentHash: string;
-  originalFilename: string | null;
+  title: string | null;
   pageCount: number;
   normalizedText: string;
   charMap: CharMap;
@@ -177,11 +204,11 @@ export async function createDocumentWithNodes(params: {
   try {
     await conn.beginTransaction();
     await conn.query(
-      "INSERT INTO documents (id, content_hash, original_filename, page_count) VALUES (?, ?, ?, ?)",
+      "INSERT INTO documents (id, content_hash, title, page_count) VALUES (?, ?, ?, ?)",
       [
         docId,
         params.contentHash,
-        params.originalFilename,
+        params.title,
         params.pageCount,
       ],
     );
@@ -210,6 +237,7 @@ export async function createDocumentWithNodes(params: {
 }
 
 interface AgentAnnotationRow extends RowDataPacket {
+  snapshot_owner_name?: string | null;
   lens_color?: string | null;
   lens_name?: string | null;
   owner_name?: string | null;
@@ -235,7 +263,7 @@ function toAgentAnnotation(row: AgentAnnotationRow): AgentAnnotation {
     agentId: row.agent_id,
     lensColor: lensColor(row.agent_id, row.lens_color),
     lensName: row.lens_name ?? undefined,
-    ownerName: row.owner_name ?? undefined,
+    ownerName: row.snapshot_owner_name ?? row.owner_name ?? undefined,
     agentVersion: row.agent_version,
     runId: row.run_id,
     ownerId: row.owner_id,
@@ -260,8 +288,8 @@ export async function insertAgentAnnotations(
     for (const a of annotations) {
       await conn.query(
         `INSERT INTO agent_annotations
-          (id, doc_id, agent_id, agent_version, run_id, owner_id, anchor, evidence_span, comment, severity, confidence, visibility, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (id, doc_id, agent_id, agent_version, run_id, owner_id, owner_name, lens_name, lens_color, anchor, evidence_span, comment, severity, confidence, visibility, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           a.id,
           a.docId,
@@ -269,6 +297,9 @@ export async function insertAgentAnnotations(
           a.agentVersion,
           a.runId,
           a.ownerId,
+          a.ownerName ?? null,
+          a.lensName ?? null,
+          a.lensColor ?? null,
           JSON.stringify(a.anchor),
           JSON.stringify(a.evidenceSpan),
           a.comment,
@@ -294,7 +325,7 @@ export async function listAgentAnnotationsForDoc(
   viewerId: string,
 ): Promise<AgentAnnotation[]> {
   const [rows] = await pool.query<AgentAnnotationRow[]>(
-    "SELECT a.*, l.color AS lens_color, l.name AS lens_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.doc_id = ? AND (a.visibility = 'org' OR a.owner_id = ?) ORDER BY a.created_at ASC",
+    "SELECT a.*, COALESCE(a.lens_color, l.color) AS lens_color, COALESCE(a.lens_name, l.name) AS lens_name, a.owner_name AS snapshot_owner_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.doc_id = ? AND (a.visibility = 'org' OR a.owner_id = ?) ORDER BY a.created_at ASC",
     [docId, viewerId],
   );
   return rows.map(toAgentAnnotation);
@@ -333,10 +364,11 @@ interface UserRow extends RowDataPacket {
   email: string;
   sso_sub: string | null;
   role: Role;
+  status: "pending" | "active";
 }
 
 function toUser(row: UserRow): User {
-  return { id: row.id, displayName: row.display_name, email: row.email, role: row.role };
+  return { id: row.id, displayName: row.display_name, email: row.email, role: row.role, status: row.status };
 }
 
 export async function listUsers(): Promise<User[]> {
@@ -360,7 +392,7 @@ export async function setUserRole(
     await conn.beginTransaction();
     const [targetRows] = await conn.query<UserRow[]>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
     const target = targetRows[0];
-    if (!target) {
+    if (!target || target.status === "pending") {
       await conn.rollback();
       return { ok: false, reason: "not-found" };
     }
@@ -392,8 +424,8 @@ export async function findUserById(id: string): Promise<User | null> {
  * (docs/02-decisions.md #4, #11). Links to an existing user by `sso_sub`
  * first, then falls back to linking by email (covers a user who existed
  * before SSO was wired up), and only creates a new row if neither matches.
- * A brand-new user's role is 'member' unless their email is in
- * config.sso.adminEmails, which bootstraps the very first admin.
+ * New accounts remain pending members. The configured bootstrap email may
+ * create the initial active admin only while no active admin exists.
  */
 export async function upsertUserFromSso(params: {
   ssoSub: string;
@@ -415,12 +447,108 @@ export async function upsertUserFromSso(params: {
   }
 
   const id = uuid();
-  const role: Role = params.isBootstrapAdmin ? "admin" : "member";
-  await pool.query(
-    "INSERT INTO users (id, display_name, email, sso_sub, role) VALUES (?, ?, ?, ?, ?)",
-    [id, params.displayName, params.email, params.ssoSub, role],
-  );
-  return { id, displayName: params.displayName, email: params.email, role };
+  const [activeAdmins] = await pool.query<RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1");
+  const bootstrap = params.isBootstrapAdmin && activeAdmins.length === 0;
+  const role: Role = bootstrap ? "admin" : "member";
+  const status = bootstrap ? "active" : "pending";
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    await conn.query("INSERT INTO users (id, display_name, email, sso_sub, role, status) VALUES (?, ?, ?, ?, ?, ?)",
+      [id, params.displayName, params.email, params.ssoSub, role, status]);
+    if (status === "pending") {
+      const [admins] = await conn.query<RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
+      if (admins.length) await conn.query("INSERT INTO membership_notifications (id, recipient_id, applicant_id) VALUES ?",
+        [admins.map(admin => [uuid(), admin.id, id])]);
+    }
+    await conn.commit();
+  } catch (err) {
+    await conn.rollback();
+    if (typeof err === "object" && err !== null && "code" in err && err.code === "ER_DUP_ENTRY") {
+      const [existing] = await pool.query<UserRow[]>("SELECT * FROM users WHERE sso_sub = ? LIMIT 1", [params.ssoSub]);
+      if (existing[0]) return toUser(existing[0]);
+    }
+    throw err;
+  } finally { conn.release(); }
+  return { id, displayName: params.displayName, email: params.email, role, status };
+}
+
+export async function approveMembership(userId: string): Promise<User | null> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query<UserRow[]>("SELECT * FROM users WHERE id = ? FOR UPDATE", [userId]);
+    if (!rows[0]) { await conn.rollback(); return null; }
+    await conn.query("UPDATE users SET status = 'active' WHERE id = ?", [userId]);
+    await conn.query("UPDATE membership_notifications SET read_at = COALESCE(read_at, NOW(3)) WHERE applicant_id = ?", [userId]);
+    await conn.commit();
+    return { ...toUser(rows[0]), status: "active" };
+  } catch (err) { await conn.rollback(); throw err; }
+  finally { conn.release(); }
+}
+
+export interface UserDeletionPreview {
+  user: User;
+  ownedCollections: number;
+  annotations: number;
+  personalLenses: number;
+  personalProviders: number;
+  privateLensAnnotations: number;
+  sharedLensAnnotations: number;
+}
+
+export async function getUserDeletionPreview(userId: string): Promise<UserDeletionPreview | null> {
+  const user = await findUserById(userId);
+  if (!user) return null;
+  const [rows] = await pool.query<RowDataPacket[]>(`SELECT
+    (SELECT COUNT(*) FROM collections WHERE owner_id = ?) AS owned_collections,
+    (SELECT COUNT(*) FROM human_annotations WHERE author_id = ?) AS annotations,
+    (SELECT COUNT(*) FROM lenses WHERE owner_id = ?) AS personal_lenses,
+    (SELECT COUNT(*) FROM providers WHERE owner_id = ?) AS personal_providers,
+    (SELECT COUNT(*) FROM agent_annotations WHERE owner_id = ? AND visibility = 'private') AS private_lens_annotations,
+    (SELECT COUNT(*) FROM agent_annotations WHERE owner_id = ? AND visibility = 'org') AS shared_lens_annotations`,
+  [userId, userId, userId, userId, userId, userId]);
+  const row = rows[0];
+  return {
+    user,
+    ownedCollections: Number(row.owned_collections), annotations: Number(row.annotations),
+    personalLenses: Number(row.personal_lenses), personalProviders: Number(row.personal_providers),
+    privateLensAnnotations: Number(row.private_lens_annotations), sharedLensAnnotations: Number(row.shared_lens_annotations),
+  };
+}
+
+export type DeleteUserResult = "deleted" | "not-found" | "self" | "last-admin";
+export async function deleteUserAccount(actorId: string, targetId: string): Promise<DeleteUserResult> {
+  if (actorId === targetId) return "self";
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [rows] = await conn.query<UserRow[]>("SELECT * FROM users WHERE id = ? FOR UPDATE", [targetId]);
+    const target = rows[0];
+    if (!target) { await conn.rollback(); return "not-found"; }
+    if (target.role === "admin" && target.status === "active") {
+      const [admins] = await conn.query<UserRow[]>("SELECT * FROM users WHERE role = 'admin' AND status = 'active' FOR UPDATE");
+      if (admins.length <= 1) { await conn.rollback(); return "last-admin"; }
+    }
+
+    // Snapshot names/colors before removing the personal lens configuration.
+    await conn.query(`UPDATE agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id
+      SET a.lens_name = COALESCE(a.lens_name, l.name), a.lens_color = COALESCE(a.lens_color, l.color), a.owner_name = COALESCE(a.owner_name, ?)
+      WHERE a.owner_id = ? AND a.visibility = 'org'`, [target.display_name, targetId]);
+    await conn.query("DELETE FROM agent_annotations WHERE owner_id = ? AND visibility = 'private'", [targetId]);
+    await conn.query(`DELETE lr FROM lens_runs lr WHERE lr.owner_id = ? AND NOT EXISTS (
+      SELECT 1 FROM agent_annotations a WHERE a.doc_id = lr.doc_id AND a.agent_id = lr.lens_id AND a.visibility = 'org')`, [targetId]);
+    await conn.query("UPDATE agent_annotations SET owner_id = NULL WHERE owner_id = ?", [targetId]);
+    await conn.query("UPDATE lens_runs SET owner_id = NULL WHERE owner_id = ?", [targetId]);
+    await conn.query("UPDATE human_annotations SET author_id = NULL WHERE author_id = ?", [targetId]);
+    await conn.query("UPDATE lenses SET provider_id = NULL WHERE provider_id IN (SELECT id FROM providers WHERE owner_id = ?)", [targetId]);
+    await conn.query("DELETE FROM lenses WHERE owner_id = ?", [targetId]);
+    await conn.query("DELETE FROM providers WHERE owner_id = ?", [targetId]);
+    await conn.query("DELETE FROM users WHERE id = ?", [targetId]);
+    await conn.commit();
+    return "deleted";
+  } catch (err) { await conn.rollback(); throw err; }
+  finally { conn.release(); }
 }
 
 interface SsoConfigRow extends RowDataPacket {
@@ -563,15 +691,15 @@ export async function updateSsoConfig(params: {
 }
 
 interface HumanAnnotationRow extends RowDataPacket {
-  author_name: string;
-  author_role: HumanAnnotation["authorRole"];
+  author_name: string | null;
+  author_role: HumanAnnotation["authorRole"] | null;
   parent_id: string | null;
   parent_kind: "human" | "agent" | null;
   thread_root_id: string | null;
   thread_root_kind: "human" | "agent" | null;
   id: string;
   doc_id: string;
-  author_id: string;
+  author_id: string | null;
   anchor: string;
   body: string;
   visibility: Visibility;
@@ -584,7 +712,7 @@ interface HumanAnnotationRow extends RowDataPacket {
 function toHumanAnnotation(row: HumanAnnotationRow): HumanAnnotation {
   return {
     id: row.id, docId: row.doc_id, authorId: row.author_id,
-    authorName: row.author_name, authorRole: row.author_role,
+    authorName: row.author_name ?? "Deleted user", authorRole: row.author_role ?? undefined,
     parentId: row.parent_id, parentKind: row.parent_kind,
     threadRootId: row.thread_root_id, threadRootKind: row.thread_root_kind,
     anchor: JSON.parse(row.anchor), body: row.deleted_at ? "" : row.body,
@@ -596,13 +724,13 @@ function toHumanAnnotation(row: HumanAnnotationRow): HumanAnnotation {
 
 export async function findHumanAnnotationById(id: string): Promise<HumanAnnotation | null> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    "SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h JOIN users u ON u.id = h.author_id WHERE h.id = ? LIMIT 1", [id],
+    "SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h LEFT JOIN users u ON u.id = h.author_id WHERE h.id = ? LIMIT 1", [id],
   );
   return rows[0] ? toHumanAnnotation(rows[0]) : null;
 }
 
 export async function findAgentAnnotationById(id: string): Promise<AgentAnnotation | null> {
-  const [rows] = await pool.query<AgentAnnotationRow[]>("SELECT a.*, l.color AS lens_color, l.name AS lens_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.id = ? LIMIT 1", [id]);
+  const [rows] = await pool.query<AgentAnnotationRow[]>("SELECT a.*, COALESCE(a.lens_color, l.color) AS lens_color, COALESCE(a.lens_name, l.name) AS lens_name, a.owner_name AS snapshot_owner_name, u.display_name AS owner_name FROM agent_annotations a LEFT JOIN lenses l ON l.id = a.agent_id LEFT JOIN users u ON u.id = a.owner_id WHERE a.id = ? LIMIT 1", [id]);
   return rows[0] ? toAgentAnnotation(rows[0]) : null;
 }
 
@@ -610,7 +738,7 @@ export async function findAgentAnnotationById(id: string): Promise<AgentAnnotati
 export async function listHumanAnnotationsForDoc(docId: string, viewerId: string): Promise<HumanAnnotation[]> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
     `SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h
-     JOIN users u ON u.id = h.author_id
+     LEFT JOIN users u ON u.id = h.author_id
      LEFT JOIN human_annotations r ON h.thread_root_kind = 'human' AND r.id = h.thread_root_id AND r.doc_id = h.doc_id
      LEFT JOIN agent_annotations a ON h.thread_root_kind = 'agent' AND a.id = h.thread_root_id AND a.doc_id = h.doc_id
      WHERE h.doc_id = ? AND (

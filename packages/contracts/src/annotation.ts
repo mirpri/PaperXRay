@@ -34,7 +34,7 @@ export interface HumanAnnotation {
   votes?: AnnotationVotes;
   id: string;
   docId: string;
-  authorId: string;
+  authorId: string | null;
   authorName?: string;
   authorRole?: Role;
   parentId?: string | null;

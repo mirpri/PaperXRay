@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import type { Role, SsoConfigPublic, User } from "@paper-xray/contracts";
-import { exportSsoConfigJson, fetchSsoConfig, fetchUsers, saveSsoConfig, setUserRole } from "../api";
+import { approveUser, deleteUser, exportSsoConfigJson, fetchSsoConfig, fetchUserDeletionPreview, fetchUsers, saveSsoConfig, setUserRole, type UserDeletionPreview } from "../api";
+import { useNotifications } from "../NotificationContext";
 import { useAuth } from "../auth/AuthContext";
+import { useToast } from "../ToastContext";
 import { ProviderSettings } from "../components/ProviderSettings";
 import { MAX_SSO_JSON_BYTES, parseSsoConfigJson } from "./sso-config-json";
 import { Header } from "../components/Header";
@@ -24,23 +26,49 @@ const SSO_FIELDS: Array<[keyof Omit<SsoConfigPublic, "hasClientSecret">, string]
   ["accountManagementUrl", "ACCOUNT MANAGEMENT URL"],
 ];
 
+type AdminSection = "providers" | "users" | "sso";
+
 /** Admin panel: roles (docs/02-decisions.md #4) and the org's OAuth2 SSO settings (#11). */
 export function AdminPage() {
   const { user: me } = useAuth();
+  const { revision } = useNotifications();
+  const { showToast } = useToast();
+  const [searchParams] = useSearchParams();
+  const [activeSection, setActiveSection] = useState<AdminSection>(
+    (searchParams.get("section") as AdminSection) || "providers"
+  );
+  const [approving, setApproving] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<UserDeletionPreview | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [users, setUsers] = useState<User[] | null>(null);
+  const [userSearch, setUserSearch] = useState("");
   const [sso, setSso] = useState<SsoConfigPublic | null>(null);
   const [newSecret, setNewSecret] = useState("");
   const [clearSecret, setClearSecret] = useState(false);
   const [ssoBusy, setSsoBusy] = useState(false);
   const ssoFileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     if (me?.role !== "admin") return;
-    fetchUsers().then(setUsers).catch((err) => setError(String(err)));
     fetchSsoConfig().then(setSso).catch((err) => setError(String(err)));
   }, [me?.role]);
+
+  useEffect(() => {
+    if (me?.role === "admin") fetchUsers().then(setUsers).catch(err => setError(String(err)));
+  }, [me?.role, revision]);
+
+  async function approve(user: User) {
+    if (approving) return;
+    setApproving(user.id); setError(null);
+    try {
+      const updated = await approveUser(user.id);
+      setUsers(current => (current ?? []).map(u => u.id === updated.id ? updated : u));
+      showToast(`${updated.displayName} has been approved.`);
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setApproving(null); }
+  }
 
   if (me?.role !== "admin") {
     return (
@@ -57,33 +85,60 @@ export function AdminPage() {
 
   async function changeRole(user: User, role: Role) {
     setError(null);
-    setNotice(null);
     try {
       const updated = await setUserRole(user.id, role);
       setUsers((current) => (current ?? []).map((u) => (u.id === updated.id ? updated : u)));
-      setNotice(`${updated.displayName} is now ${updated.role}.`);
+      showToast(`${updated.displayName} is now ${updated.role}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   }
 
+  async function beginDelete(user: User) {
+    setError(null);
+    if (user.status === "pending") {
+      setDeleting(true);
+      try {
+        await deleteUser(user.id);
+        setUsers(current => (current ?? []).filter(u => u.id !== user.id));
+        showToast(`${user.displayName} was deleted. Future SSO logins require approval.`);
+      } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+      finally { setDeleting(false); }
+    } else {
+      try { setDeletePreview(await fetchUserDeletionPreview(user.id)); setDeleteConfirmation(""); }
+      catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deletePreview || deleteConfirmation.trim().toLowerCase() !== deletePreview.user.email.toLowerCase() || deleting) return;
+    setDeleting(true); setError(null);
+    try {
+      await deleteUser(deletePreview.user.id);
+      setUsers(current => (current ?? []).filter(user => user.id !== deletePreview.user.id));
+      showToast(`${deletePreview.user.displayName} was deleted. Future SSO logins require approval.`);
+      setDeletePreview(null);
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setDeleting(false); }
+  }
+
   async function importSso(file: File) {
     if (ssoBusy) return;
-    setSsoBusy(true); setError(null); setNotice(null);
+    setSsoBusy(true); setError(null);
     try {
       if (file.size > MAX_SSO_JSON_BYTES) throw new Error("SSO JSON must be 64 KB or smaller.");
       const { clientSecret, ...fields } = parseSsoConfigJson(await file.text());
       setSso({ ...fields, accountManagementUrl: fields.accountManagementUrl ?? "", hasClientSecret: sso?.hasClientSecret ?? false });
       setNewSecret(clientSecret ?? "");
       setClearSecret(clientSecret === null || clientSecret === "");
-      setNotice("JSON imported. Save SSO settings to apply.");
+      showToast("JSON imported. Save SSO settings to apply.");
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setSsoBusy(false); }
   }
 
   async function exportSso() {
     if (ssoBusy) return;
-    setSsoBusy(true); setError(null); setNotice(null);
+    setSsoBusy(true); setError(null);
     try {
       const blob = await exportSsoConfigJson();
       const url = URL.createObjectURL(blob);
@@ -101,7 +156,6 @@ export function AdminPage() {
     if (!sso || ssoBusy) return;
     setSsoBusy(true);
     setError(null);
-    setNotice(null);
     try {
       const { hasClientSecret: _ignored, ...fields } = sso;
       const saved = await saveSsoConfig({
@@ -111,7 +165,7 @@ export function AdminPage() {
       setSso(saved);
       setNewSecret("");
       setClearSecret(false);
-      setNotice("SSO settings saved.");
+      showToast("SSO settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally { setSsoBusy(false); }
@@ -130,117 +184,224 @@ export function AdminPage() {
           </div>
         }
       />
-      <main className="pxr-admin-main pxr-settings-scroll">
-        <div className="pxr-admin-content">
-        {error && <p style={{ color: "crimson", fontSize: 13, margin: 0 }}>{error}</p>}
-        {notice && <p style={{ color: "var(--human)", fontSize: 13, margin: 0 }}>{notice}</p>}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        {/* Left sidebar navigation */}
+        <aside style={{ width: 220, flexShrink: 0, borderRight: "1px solid var(--border)", background: "var(--panel)", padding: "16px 0" }}>
+          <nav style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <button
+              type="button"
+              onClick={() => setActiveSection("providers")}
+              style={{
+                padding: "10px 16px",
+                textAlign: "left",
+                border: "none",
+                background: activeSection === "providers" ? "var(--surface)" : "transparent",
+                borderLeft: activeSection === "providers" ? "3px solid var(--human)" : "3px solid transparent",
+                color: "var(--text)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Model Providers
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection("users")}
+              style={{
+                padding: "10px 16px",
+                textAlign: "left",
+                border: "none",
+                background: activeSection === "users" ? "var(--surface)" : "transparent",
+                borderLeft: activeSection === "users" ? "3px solid var(--human)" : "3px solid transparent",
+                color: "var(--text)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Users & Roles
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveSection("sso")}
+              style={{
+                padding: "10px 16px",
+                textAlign: "left",
+                border: "none",
+                background: activeSection === "sso" ? "var(--surface)" : "transparent",
+                borderLeft: activeSection === "sso" ? "3px solid var(--human)" : "3px solid transparent",
+                color: "var(--text)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Single Sign-On
+            </button>
+          </nav>
+        </aside>
 
-        <ProviderSettings />
+        {/* Main content area */}
+        <main className="pxr-admin-main pxr-settings-scroll" style={{ flex: 1, overflow: "auto" }}>
+          <div className="pxr-admin-content">
+            {error && <p style={{ color: "crimson", fontSize: 13, margin: "0 0 16px" }}>{error}</p>}
 
-        <section>
-          <h2 className="pxr-section-title">USERS & ROLES</h2>
-          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>
-            SSO only provides identity; roles are set here. Users appear after their first login.
-          </p>
-          {users === null ? (
-            <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "var(--surface)" }}>
-                <thead>
-                  <tr style={{ textAlign: "left" }}>
-                    {["NAME", "EMAIL", "ROLE"].map((h) => (
-                      <th key={h} className="mono" style={{ fontSize: 10, fontWeight: 500, color: "var(--text-muted)", padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((u) => (
-                    <tr key={u.id}>
-                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
-                        {u.displayName}
-                        {u.id === me.id && <span style={{ color: "var(--text-soft)" }}> (you)</span>}
-                      </td>
-                      <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>{u.email}</td>
-                      <td style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
-                        <select
-                          className="pxr-input"
-                          style={{ width: 130, height: 30 }}
-                          value={u.role}
-                          title={ROLE_HINTS[u.role]}
-                          onChange={(e) => void changeRole(u, e.target.value as Role)}
-                        >
-                          {ROLES.map((r) => (
-                            <option key={r} value={r}>
-                              {r}
-                            </option>
-                          ))}
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+            {activeSection === "providers" && <ProviderSettings />}
 
-        <section>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
-            <h2 className="pxr-section-title" style={{ margin: 0 }}>SINGLE SIGN-ON (OAUTH 2.0 + PKCE)</h2>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input ref={ssoFileInput} type="file" accept=".json,application/json" hidden aria-label="Import SSO JSON" onChange={e => {
-                const file = e.currentTarget.files?.[0]; e.currentTarget.value = "";
-                if (file) void importSso(file);
-              }} />
-              <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => ssoFileInput.current?.click()}>Import JSON</button>
-              <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => void exportSso()}>Export JSON</button>
-            </div>
-          </div>
-          <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>Export downloads the saved settings, including the client secret. Imported settings take effect after saving.</p>
-          {sso === null ? (
-            <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
-          ) : (
-            <form onSubmit={submitSso} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 12 }}>
-              {SSO_FIELDS.map(([key, label]) => (
-                <div key={key}>
-                  <label className="pxr-label" htmlFor={`sso-${key}`}>{label}</label>
-                  <input id={`sso-${key}`} className="pxr-input" disabled={ssoBusy} value={sso[key] ?? ""} onChange={(e) => setSso({ ...sso, [key]: e.target.value })} />
+            {activeSection === "users" && (
+              <section>
+                <h2 className="pxr-section-title">USERS & ROLES</h2>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>
+                  New members await approval after their first SSO login. Approve requests here to grant access.
+                </p>
+                <div style={{ marginBottom: 12 }}>
+                  <input
+                    type="search"
+                    placeholder="Search by name or email..."
+                    value={userSearch}
+                    onChange={(e) => setUserSearch(e.target.value)}
+                    className="pxr-input"
+                    style={{ maxWidth: 300 }}
+                  />
                 </div>
-              ))}
-              <div>
-                <label className="pxr-label" htmlFor="sso-secret">
-                  CLIENT SECRET · {sso.hasClientSecret ? "SET (WRITE-ONLY)" : "NOT SET"}
-                </label>
-                <input
-                  id="sso-secret"
-                  className="pxr-input"
-                  type="password"
-                  autoComplete="off"
-                  value={newSecret}
-                  disabled={clearSecret || ssoBusy}
-                  onChange={(e) => setNewSecret(e.target.value)}
-                  placeholder={sso.hasClientSecret ? "Leave empty to keep the current secret" : "Optional"}
-                />
-                {sso.hasClientSecret && (
-                  <label className="pxr-check" style={{ marginTop: 6 }}>
-                    <input type="checkbox" disabled={ssoBusy} checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} />
-                    Remove the stored secret
-                  </label>
+                {users === null ? (
+                  <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "var(--surface)" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left" }}>
+                          {["NAME", "EMAIL", "ROLE", "MEMBERSHIP", ""].map((h, index) => (
+                            <th key={h || index} className="mono" style={{ fontSize: 10, fontWeight: 500, color: "var(--text-muted)", padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users
+                          .filter((u) => {
+                            if (!userSearch.trim()) return true;
+                            const search = userSearch.toLowerCase();
+                            return (
+                              u.displayName.toLowerCase().includes(search) ||
+                              u.email.toLowerCase().includes(search)
+                            );
+                          })
+                          .map((u) => (
+                          <tr key={u.id}>
+                            <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                              {u.displayName}
+                              {u.id === me.id && <span style={{ color: "var(--text-soft)" }}> (you)</span>}
+                            </td>
+                            <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>{u.email}</td>
+                            <td style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
+                              <select
+                                className="pxr-input"
+                                style={{ width: 130, height: 30 }}
+                                value={u.role}
+                                disabled={u.status === "pending"}
+                                title={ROLE_HINTS[u.role]}
+                                onChange={(e) => void changeRole(u, e.target.value as Role)}
+                              >
+                                {ROLES.map((r) => (
+                                  <option key={r} value={r}>
+                                    {r}
+                                  </option>
+                                ))}
+                              </select>
+                            </td>
+                            <td style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
+                              {u.status === "pending" ? <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Pending</span>
+                                <button type="button" className="pxr-btn" disabled={approving !== null} onClick={() => void approve(u)}>{approving === u.id ? "Approving…" : "Approve"}</button>
+                              </div> : <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Active</span>}
+                            </td>
+                            <td style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
+                              <button type="button" className="pxr-btn" disabled={u.id === me.id || (u.status !== "pending" && u.role === "admin" && users.filter(candidate => candidate.role === "admin" && candidate.status !== "pending").length <= 1)} title={u.id === me.id ? "You cannot delete your own account" : u.status !== "pending" && u.role === "admin" && users.filter(candidate => candidate.role === "admin" && candidate.status !== "pending").length <= 1 ? "Cannot delete the last active administrator" : "Delete user"} onClick={() => void beginDelete(u)}>Delete</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
-              </div>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <button type="submit" className="pxr-btn pxr-btn-primary" disabled={ssoBusy}>
-                  Save SSO settings
-                </button>
-              </div>
-            </form>
-          )}
+              </section>
+            )}
+
+            {activeSection === "sso" && (
+              <section>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+                  <h2 className="pxr-section-title" style={{ margin: 0 }}>SINGLE SIGN-ON (OAUTH 2.0 + PKCE)</h2>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <input ref={ssoFileInput} type="file" accept=".json,application/json" hidden aria-label="Import SSO JSON" onChange={e => {
+                      const file = e.currentTarget.files?.[0]; e.currentTarget.value = "";
+                      if (file) void importSso(file);
+                    }} />
+                    <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => ssoFileInput.current?.click()}>Import JSON</button>
+                    <button type="button" className="pxr-btn" disabled={ssoBusy || !sso} onClick={() => void exportSso()}>Export JSON</button>
+                  </div>
+                </div>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 12px" }}>Export downloads the saved settings, including the client secret. Imported settings take effect after saving.</p>
+                {sso === null ? (
+                  <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
+                ) : (
+                  <form onSubmit={submitSso} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(260px, 100%), 1fr))", gap: 12 }}>
+                    {SSO_FIELDS.map(([key, label]) => (
+                      <div key={key}>
+                        <label className="pxr-label" htmlFor={`sso-${key}`}>{label}</label>
+                        <input id={`sso-${key}`} className="pxr-input" disabled={ssoBusy} value={sso[key] ?? ""} onChange={(e) => setSso({ ...sso, [key]: e.target.value })} />
+                      </div>
+                    ))}
+                    <div>
+                      <label className="pxr-label" htmlFor="sso-secret">
+                        CLIENT SECRET · {sso.hasClientSecret ? "SET (WRITE-ONLY)" : "NOT SET"}
+                      </label>
+                      <input
+                        id="sso-secret"
+                        className="pxr-input"
+                        type="password"
+                        autoComplete="off"
+                        value={newSecret}
+                        disabled={clearSecret || ssoBusy}
+                        onChange={(e) => setNewSecret(e.target.value)}
+                        placeholder={sso.hasClientSecret ? "Leave empty to keep the current secret" : "Optional"}
+                      />
+                      {sso.hasClientSecret && (
+                        <label className="pxr-check" style={{ marginTop: 6 }}>
+                          <input type="checkbox" disabled={ssoBusy} checked={clearSecret} onChange={(e) => setClearSecret(e.target.checked)} />
+                          Remove the stored secret
+                        </label>
+                      )}
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <button type="submit" className="pxr-btn pxr-btn-primary" disabled={ssoBusy}>
+                        Save SSO settings
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </section>
+            )}
+          </div>
+        </main>
+      </div>
+      {deletePreview && <div role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !deleting) setDeletePreview(null); }} style={{ position: "fixed", inset: 0, zIndex: 1200, display: "grid", placeItems: "center", padding: 20, background: "rgba(0,0,0,.35)" }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="delete-user-title" style={{ width: "min(520px, 100%)", maxHeight: "85vh", overflow: "auto", background: "var(--surface)", border: "1px solid var(--border-strong)", borderRadius: 5, padding: 22 }}>
+          <h2 id="delete-user-title" style={{ font: "600 19px var(--font-serif)", margin: "0 0 6px" }}>Delete {deletePreview.user.displayName}?</h2>
+          <p style={{ fontSize: 12, color: "var(--text-muted)" }}>{deletePreview.user.email} · {deletePreview.user.status === "pending" ? "Pending" : "Active"}</p>
+          <p style={{ fontSize: 13 }}>Their account, personal collections, providers, and lenses will be deleted. Organization papers remain. Comments and shared Lens results remain with the author shown as “Deleted user”. Their current votes are removed.</p>
+          <p style={{ fontSize: 13 }}>If they sign in again through SSO, they will be a new pending member and need approval.</p>
+          <ul style={{ fontSize: 12, color: "var(--text-muted)", paddingLeft: 20 }}>
+            <li>{deletePreview.ownedCollections} owned collections and their links</li><li>{deletePreview.annotations} comments kept anonymously</li>
+            <li>{deletePreview.personalLenses} personal lenses and {deletePreview.personalProviders} providers</li>
+            <li>{deletePreview.privateLensAnnotations} private Lens results deleted; {deletePreview.sharedLensAnnotations} shared results kept anonymously</li>
+          </ul>
+          <label style={{ display: "grid", gap: 6, fontSize: 12, margin: "16px 0" }}>Type the user’s email to confirm
+            <input autoFocus value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} className="pxr-input" />
+          </label>
+          {error && <p role="alert" style={{ color: "#B42318", fontSize: 12 }}>{error}</p>}
+          <div style={{ display: "flex", justifyContent: "end", gap: 8 }}><button type="button" className="pxr-btn" disabled={deleting} onClick={() => setDeletePreview(null)}>Cancel</button><button type="button" className="pxr-btn pxr-btn-primary" style={{ background: "#a32622" }} disabled={deleting || deleteConfirmation.trim().toLowerCase() !== deletePreview.user.email.toLowerCase()} onClick={() => void confirmDelete()}>{deleting ? "Deleting…" : "Delete user permanently"}</button></div>
         </section>
-        </div>
-      </main>
+      </div>}
     </div>
   );
 }

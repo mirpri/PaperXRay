@@ -8,3 +8,6 @@ export * from "./user.js";
 export * from "./lens-colors.js";
 
 export * from "./notification.js";
+
+export * from "./library.js";
+export * from "./collection.js";

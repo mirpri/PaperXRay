@@ -7,11 +7,11 @@ vi.mock("./pool.js", () => ({ pool: { query: mocks.query, getConnection: mocks.g
 vi.mock("../storage/document-files.js", () => ({
   writeDocumentContent: mocks.write, readNormalizedText: mocks.text, readCharMap: mocks.charMap,
 }));
-import { createDocumentWithNodes, findDocumentById, getCharMapForDocument } from "./repositories.js";
+import { createDocumentWithNodes, findDocumentById, getCharMapForDocument, updateDocumentTitle } from "./repositories.js";
 
 const hash = "a".repeat(64);
-const row = { id: "paper", content_hash: hash, original_filename: "paper.pdf", page_count: 2, created_at: new Date("2026-01-01") };
-const params = { contentHash: hash, originalFilename: "paper.pdf", pageCount: 2, normalizedText: "论文😀", charMap: [], nodes: [] };
+const row = { id: "paper", content_hash: hash, title: "paper.pdf", page_count: 2, created_at: new Date("2026-01-01") };
+const params = { contentHash: hash, title: "paper.pdf", pageCount: 2, normalizedText: "论文😀", charMap: [], nodes: [] };
 
 describe("file-backed document repository", () => {
   beforeEach(() => {
@@ -29,6 +29,18 @@ describe("file-backed document repository", () => {
     expect(mocks.text).toHaveBeenCalledWith(hash);
     expect(mocks.charMap).toHaveBeenCalledWith(hash);
     expect(mocks.query.mock.calls.every(([sql]) => !/normalized_text|char_map|SELECT \*/.test(sql))).toBe(true);
+  });
+
+  it("updates only display metadata, including when saving the same title", async () => {
+    mocks.query.mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[row]]);
+    expect(await updateDocumentTitle("paper", "paper.pdf")).toEqual({ id: "paper", contentHash: hash, title: "paper.pdf", pageCount: 2, createdAt: row.created_at.toISOString() });
+    expect(mocks.query.mock.calls[0]).toEqual(["UPDATE documents SET title = ? WHERE id = ?", ["paper.pdf", "paper"]]);
+    expect(mocks.text).not.toHaveBeenCalled(); expect(mocks.charMap).not.toHaveBeenCalled(); expect(mocks.write).not.toHaveBeenCalled();
+  });
+
+  it("returns null for a missing document title update", async () => {
+    mocks.query.mockResolvedValueOnce([{ affectedRows: 0 }]).mockResolvedValueOnce([[]]);
+    expect(await updateDocumentTitle("missing", "New title")).toBeNull();
   });
 
   it("writes files before acquiring a connection and batches paragraph inserts", async () => {

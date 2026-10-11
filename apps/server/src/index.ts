@@ -6,6 +6,8 @@ import { config } from "./config.js";
 import { attachUser } from "./auth/middleware.js";
 import { healthRouter } from "./routes/health.js";
 import { documentsRouter } from "./routes/documents.js";
+import { documentTitlesRouter } from "./routes/document-titles.js";
+import { collectionsRouter } from "./routes/collections.js";
 import { humanAnnotationsRouter } from "./routes/human-annotations.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter } from "./routes/admin.js";
@@ -26,6 +28,8 @@ app.use(attachUser);
 
 app.use("/api", healthRouter);
 app.use("/api", documentsRouter);
+app.use("/api", documentTitlesRouter);
+app.use("/api", collectionsRouter);
 app.use("/api", humanAnnotationsRouter);
 app.use("/api", authRouter);
 app.use("/api", adminRouter);

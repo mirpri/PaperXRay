@@ -1,14 +1,15 @@
 export interface AnnotationNotification {
   id: string;
-  kind: "reply" | "upvote" | "downvote" | "cancel_upvote" | "cancel_downvote";
+  kind: "reply" | "upvote" | "downvote" | "cancel_upvote" | "cancel_downvote" | "collection_shared" | "collection_left" | "membership_requested";
   actorId: string;
   actorName: string;
-  docId: string;
+  docId: string | null;
   documentTitle: string | null;
   targetId: string;
-  targetKind: "human" | "agent";
-  threadRootId: string;
-  threadRootKind: "human" | "agent";
+  targetKind: "human" | "agent" | null;
+  threadRootId: string | null;
+  threadRootKind: "human" | "agent" | null;
+  collectionId?: string | null;
   preview: string;
   parentPreview: string | null;
   createdAt: string;

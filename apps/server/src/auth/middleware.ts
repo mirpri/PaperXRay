@@ -29,6 +29,10 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     res.status(401).json({ error: "Login required" });
     return;
   }
+  if (req.user.status === "pending") {
+    res.status(403).json({ error: "Membership is pending administrator approval", code: "membership_pending" });
+    return;
+  }
   next();
 }
 
@@ -38,7 +42,7 @@ export function requireRole(...roles: Role[]) {
       res.status(401).json({ error: "Login required" });
       return;
     }
-    if (!roles.includes(req.user.role)) {
+    if (req.user.status === "pending" || !roles.includes(req.user.role)) {
       res.status(403).json({ error: "Insufficient role" });
       return;
     }

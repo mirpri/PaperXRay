@@ -11,6 +11,8 @@
     "db:providers": "pnpm --filter @paper-xray/server db:providers",
     "db:comments": "pnpm --filter @paper-xray/server db:comments",
     "db:install": "pnpm --filter @paper-xray/server db:install",
+    "db:membership": "pnpm --filter @paper-xray/server db:membership",
+    "db:user-deletion": "pnpm --filter @paper-xray/server db:user-deletion",
     "dev:server": "pnpm --filter @paper-xray/server dev",
     "build": "pnpm -r build",
     "pretest": "pnpm --filter @paper-xray/contracts build",
@@ -21,6 +23,9 @@
     "eval": "pnpm --filter @paper-xray/contracts build && pnpm --filter @paper-xray/server eval",
     "db:lens-colors": "pnpm --filter @paper-xray/server db:lens-colors",
     "db:notifications": "pnpm --filter @paper-xray/server db:notifications",
+    "db:library": "pnpm --filter @paper-xray/server db:library",
+    "db:collections": "pnpm --filter @paper-xray/server db:collections",
+    "db:titles": "pnpm --filter @paper-xray/server db:titles",
     "db:votes": "pnpm --filter @paper-xray/server db:votes"
   },
   "devDependencies": {

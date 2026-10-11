@@ -1,33 +1,86 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import type { DocumentSummary } from "@paper-xray/contracts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import type { DocumentListQuery, DocumentPage, DocumentSort } from "@paper-xray/contracts";
 import { fetchDocuments, importDocumentFromUrl, uploadDocument, type UploadProgress } from "../api";
 import { Header } from "../components/Header";
+import { DocumentListItem } from "../components/DocumentListItem";
+import { useAuth } from "../auth/AuthContext";
+import { Search, X, ArrowUp, ArrowDown } from "lucide-react";
+import { LibraryPagination } from "../components/LibraryPagination";
+import { libraryQueryParams, readLibraryQuery } from "./library-query";
 
-function titleFor(doc: DocumentSummary): string {
-  return doc.originalFilename ?? `Untitled (${doc.contentHash.slice(0, 8)})`;
+type SortField = "date" | "title" | "pages";
+type SortDirection = "asc" | "desc";
+
+const SORT_FIELDS: { value: SortField; label: string }[] = [
+  { value: "date", label: "Date" },
+  { value: "title", label: "Title" },
+  { value: "pages", label: "Pages" },
+];
+
+function sortToFieldDirection(sort: DocumentSort): { field: SortField; direction: SortDirection } {
+  switch (sort) {
+    case "newest": return { field: "date", direction: "desc" };
+    case "oldest": return { field: "date", direction: "asc" };
+    case "title-asc": return { field: "title", direction: "asc" };
+    case "title-desc": return { field: "title", direction: "desc" };
+    case "pages-asc": return { field: "pages", direction: "asc" };
+    case "pages-desc": return { field: "pages", direction: "desc" };
+  }
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+function fieldDirectionToSort(field: SortField, direction: SortDirection): DocumentSort {
+  switch (field) {
+    case "date": return direction === "desc" ? "newest" : "oldest";
+    case "title": return direction === "asc" ? "title-asc" : "title-desc";
+    case "pages": return direction === "asc" ? "pages-asc" : "pages-desc";
+  }
 }
 
 /** Landing page: every paper anyone has uploaded, plus the upload control. */
 export function LibraryPage() {
   const navigate = useNavigate();
-  const [documents, setDocuments] = useState<DocumentSummary[] | null>(null);
+  const { user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { search, sort, page, pageSize } = readLibraryQuery(searchParams);
+  const [searchDraft, setSearchDraft] = useState(search);
+  const [composing, setComposing] = useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const resultsSection = useRef<HTMLElement>(null);
+  const [result, setResult] = useState<DocumentPage | null>(null);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [status, setStatus] = useState<"idle" | "uploading" | "importing" | "error">("idle");
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ phase: "uploading", percent: 0 });
   const [importUrl, setImportUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  function reload() {
-    fetchDocuments()
-      .then(setDocuments)
-      .catch((err) => setError(String(err)));
-  }
+  const changeQuery = useCallback((changes: Partial<DocumentListQuery>, replace = false) => {
+    setSearchParams(current => libraryQueryParams({ ...readLibraryQuery(current), ...changes }), { replace });
+  }, [setSearchParams]);
 
-  useEffect(reload, []);
+  useEffect(() => { setSearchDraft(search); }, [search]);
+  useEffect(() => {
+    if (composing || searchDraft.trim() === search) return;
+    const timer = window.setTimeout(() => changeQuery({ search: searchDraft.trim(), page: 1 }, true), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft, search, changeQuery, composing]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    setListLoading(true); setListError(null); setResult(null);
+    fetchDocuments({ search, sort, page, pageSize }, controller.signal)
+      .then(data => {
+        if (!active) return;
+        if (data.page !== page) { changeQuery({ page: data.page }, true); return; }
+        setResult(data);
+      })
+      .catch(err => { if (active) setListError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (active) setListLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [search, sort, page, pageSize, refresh, changeQuery]);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -166,54 +219,75 @@ export function LibraryPage() {
 
         {status === "error" && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
 
-        {documents === null ? (
-          <p style={{ color: "var(--text-muted)", fontSize: 13 }}>Loading…</p>
-        ) : documents.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-            No papers yet — upload a PDF to get started.
-          </p>
-        ) : (
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
-            {documents.map((doc) => (
-              <li key={doc.id}>
-                <button
-                  onClick={() => navigate(`/documents/${doc.id}`)}
+        <div className="pxr-library-controls">
+          <div className="pxr-library-search">
+            <Search size={15} aria-hidden="true" />
+            <input ref={searchInput} type="search" aria-label="Search papers by title" placeholder="Search by title…" maxLength={200}
+              value={searchDraft} onChange={event => setSearchDraft(event.target.value)}
+              onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)} />
+            {searchDraft && <button type="button" aria-label="Clear search" onClick={() => { setSearchDraft(""); changeQuery({ search: "", page: 1 }, true); searchInput.current?.focus(); }}><X size={14} aria-hidden="true" /></button>}
+          </div>
+          {(() => {
+            const { field, direction } = sortToFieldDirection(sort);
+            return (
+              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <select
+                  aria-label="Sort field"
+                  value={field}
+                  onChange={event => changeQuery({ sort: fieldDirectionToSort(event.target.value as SortField, direction), page: 1 })}
                   style={{
-                    width: "100%",
-                    textAlign: "left",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 12,
-                    padding: "14px 16px",
-                    background: "var(--surface)",
+                    height: 34,
+                    padding: "0 8px",
                     border: "1px solid var(--border-strong)",
-                    borderRadius: 4,
+                    borderRadius: 3,
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    fontSize: 12,
+                    cursor: "pointer",
                   }}
                 >
-                  <span
-                    style={{
-                      fontFamily: "var(--font-serif)",
-                      fontSize: 14,
-                      color: "var(--text)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {titleFor(doc)}
-                  </span>
-                  <span
-                    className="mono"
-                    style={{ fontSize: 10, color: "var(--text-soft)", flexShrink: 0, letterSpacing: "0.04em" }}
-                  >
-                    {doc.pageCount} pages · {formatDate(doc.createdAt)}
-                  </span>
+                  {SORT_FIELDS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+                <button
+                  onClick={() => changeQuery({ sort: fieldDirectionToSort(field, direction === "asc" ? "desc" : "asc"), page: 1 })}
+                  title={direction === "asc" ? "Ascending" : "Descending"}
+                  style={{
+                    width: 34,
+                    height: 34,
+                    padding: 0,
+                    border: "1px solid var(--border-strong)",
+                    borderRadius: 3,
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                  }}
+                >
+                  {direction === "asc" ? <ArrowUp size={15} strokeWidth={1.75} /> : <ArrowDown size={15} strokeWidth={1.75} />}
                 </button>
-              </li>
-            ))}
-          </ul>
-        )}
+              </div>
+            );
+          })()}
+        </div>
+
+        <section ref={resultsSection} className="pxr-library-results" aria-label="Papers" aria-busy={listLoading}>
+          {listLoading && <p className="pxr-library-empty" role="status">Loading papers…</p>}
+          {listError && <div className="pxr-library-load-error" role="alert">
+            <span>{listError}</span><button type="button" className="pxr-btn" onClick={() => setRefresh(value => value + 1)}>Retry</button>
+          </div>}
+          {!listLoading && !listError && result && <>
+            {result.documents.length === 0 ? <p className="pxr-library-empty">
+              {search ? "No papers match your search." : "No papers yet — upload a PDF to get started."}
+            </p> : <ul className="pxr-library-list">
+              {result.documents.map(doc => <DocumentListItem key={doc.id} document={doc} canEdit={user?.role === "admin"}
+                onChanged={() => setRefresh(value => value + 1)} />)}
+            </ul>}
+            <LibraryPagination result={result} onPage={next => { changeQuery({ page: next }); resultsSection.current?.scrollIntoView({ block: "start" }); }}
+              onPageSize={size => { changeQuery({ pageSize: size, page: 1 }); resultsSection.current?.scrollIntoView({ block: "start" }); }} />
+          </>}
+        </section>
       </main>
     </div>
   );

@@ -13,7 +13,7 @@ const ARXIV_HOSTS = new Set(["arxiv.org", "www.arxiv.org", "export.arxiv.org"]);
 export interface NormalizedPaperUrl {
   /** The URL that will actually be fetched. */
   fetchUrl: URL;
-  /** Display filename for the library page (documents.original_filename). */
+  /** Fallback display title when the PDF has no recognizable title. */
   suggestedFilename: string;
 }
 

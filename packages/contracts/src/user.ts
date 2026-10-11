@@ -10,6 +10,7 @@ export interface User {
   displayName: string;
   email: string;
   role: Role;
+  status?: "pending" | "active";
 }
 
 /**

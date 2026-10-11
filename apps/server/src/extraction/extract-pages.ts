@@ -1,12 +1,13 @@
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PageExtraction, RawTextItem } from "./types.js";
+import { extractTitle } from "./title.js";
 
 /**
  * The extraction layer proper (docs/01-nabcd-architecture.md "提取层"):
  * pure library call, one PageExtraction per page. No structure recovery
  * here — that's the reassembly layer's job (../reassembly).
  */
-export async function extractPages(pdfBytes: Uint8Array): Promise<PageExtraction[]> {
+export async function extractPdf(pdfBytes: Uint8Array, filename = ""): Promise<{ pages: PageExtraction[]; title: string | null }> {
   const doc = await getDocument({
     data: pdfBytes,
     useWorkerFetch: false,
@@ -39,8 +40,19 @@ export async function extractPages(pdfBytes: Uint8Array): Promise<PageExtraction
       const [x0, y0, x1, y1] = page.view;
       pages.push({ width: x1 - x0, height: y1 - y0, items });
     }
-    return pages;
+    // Missing/malformed metadata must not fail an otherwise readable PDF.
+    const metadataTitles: unknown[] = [];
+    try {
+      const { info, metadata } = await doc.getMetadata();
+      metadataTitles.push(metadata?.get("dc:title"), (info as { Title?: unknown }).Title);
+    } catch { /* Fall back to the first-page layout. */ }
+    return { pages, title: extractTitle(metadataTitles, pages[0], filename) };
   } finally {
     await doc.destroy();
   }
+}
+
+/** Kept for evaluation callers that only need the original text extraction. */
+export async function extractPages(pdfBytes: Uint8Array): Promise<PageExtraction[]> {
+  return (await extractPdf(pdfBytes)).pages;
 }

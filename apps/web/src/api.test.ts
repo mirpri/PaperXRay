@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchNotifications, fetchUnreadNotificationCount, markAllMessagesRead, markMessageRead, uploadDocument, voteOnAnnotation, fetchAccountManagementUrl, saveSsoConfig, ACCOUNT_MANAGEMENT_URL_CHANGED, exportSsoConfigJson } from "./api";
+import { fetchNotifications, fetchUnreadNotificationCount, markAllMessagesRead, markMessageRead, uploadDocument, voteOnAnnotation, fetchAccountManagementUrl, saveSsoConfig, ACCOUNT_MANAGEMENT_URL_CHANGED, exportSsoConfigJson, updateDocumentTitle, fetchDocuments } from "./api";
 
 class UploadRequest {
   static current: UploadRequest;
@@ -132,4 +132,39 @@ describe("SSO JSON export API", () => {
    request.mockResolvedValue(new Response(JSON.stringify({ error: "Insufficient role" }), { status: 403 }));
    await expect(exportSsoConfigJson()).rejects.toThrow("Insufficient role");
  });
+});
+
+describe("document title API", () => {
+  const request = vi.fn();
+  beforeEach(() => { request.mockReset(); vi.stubGlobal("fetch", request); });
+  afterEach(() => vi.unstubAllGlobals());
+  it("saves only title metadata using the authenticated PATCH endpoint", async () => {
+    request.mockResolvedValue(new Response(JSON.stringify({ document: { id: "paper", title: "New title" } })));
+    await expect(updateDocumentTitle("paper", "New title")).resolves.toEqual({ id: "paper", title: "New title" });
+    expect(request).toHaveBeenCalledWith(expect.stringMatching(/documents\/paper$/), { method: "PATCH", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: "New title" }) });
+  });
+  it("surfaces permission errors", async () => {
+    request.mockResolvedValue(new Response(JSON.stringify({ error: "Insufficient role" }), { status: 403 }));
+    await expect(updateDocumentTitle("paper", "Title")).rejects.toThrow("Insufficient role");
+  });
+});
+
+describe("library API", () => {
+  const request = vi.fn();
+  beforeEach(() => { request.mockReset(); vi.stubGlobal("fetch", request); });
+  afterEach(() => vi.unstubAllGlobals());
+  it("sends search, sort and bounded pagination with abort support", async () => {
+    const page = { documents: [], total: 0, page: 1, pageSize: 50, totalPages: 1 };
+    request.mockResolvedValue(new Response(JSON.stringify(page)));
+    const controller = new AbortController();
+    await expect(fetchDocuments({ search: "论文 & 100%", sort: "title-desc", page: 1, pageSize: 50 }, controller.signal)).resolves.toEqual(page);
+    const [url, options] = request.mock.calls[0];
+    const params = new URL(url).searchParams;
+    expect(Object.fromEntries(params)).toEqual({ q: "论文 & 100%", sort: "title-desc", page: "1", pageSize: "50" });
+    expect(options).toEqual({ credentials: "include", signal: controller.signal });
+  });
+  it("surfaces list errors for the retry UI", async () => {
+    request.mockResolvedValue(new Response(JSON.stringify({ error: "Login required" }), { status: 401 }));
+    await expect(fetchDocuments({ search: "", sort: "newest", page: 1, pageSize: 20 })).rejects.toThrow("Login required");
+  });
 });

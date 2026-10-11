@@ -6,10 +6,13 @@
 CREATE TABLE documents (
   id            CHAR(36)      NOT NULL PRIMARY KEY,
   content_hash  CHAR(64)      NOT NULL, -- sha256 of raw PDF bytes; document identity (docs/02-decisions.md #2)
-  original_filename VARCHAR(500) NULL,
+  title VARCHAR(500) NULL,
   page_count    INT           NOT NULL,
   created_at    DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-  UNIQUE KEY uq_documents_content_hash (content_hash)
+  UNIQUE KEY uq_documents_content_hash (content_hash),
+  KEY idx_documents_created (created_at, id),
+  KEY idx_documents_title (title, id),
+  KEY idx_documents_pages (page_count, id)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE nodes (
@@ -31,15 +34,79 @@ CREATE TABLE users (
   email         VARCHAR(255) NOT NULL,
   sso_sub       VARCHAR(255) NULL,
   role          VARCHAR(16)  NOT NULL DEFAULT 'member', -- admin | curator | member (docs/02-decisions.md #4)
+  status        ENUM('pending', 'active') NOT NULL DEFAULT 'pending',
   created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_users_email (email),
   UNIQUE KEY uq_users_sso_sub (sso_sub)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
+-- Personal collections reference the shared organization library; they never own PDFs.
+CREATE TABLE membership_notifications (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  recipient_id CHAR(36) NOT NULL,
+  applicant_id CHAR(36) NOT NULL,
+  read_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_membership_notice (recipient_id, applicant_id),
+  KEY idx_membership_inbox (recipient_id, read_at, created_at, id),
+  FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (applicant_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE collections (
+  id          CHAR(36)     NOT NULL PRIMARY KEY,
+  owner_id    CHAR(36)     NOT NULL,
+  name        VARCHAR(120) NOT NULL,
+  description VARCHAR(500) NOT NULL DEFAULT '',
+  created_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at  DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_collections_owner_name (owner_id, name),
+  KEY idx_collections_owner_updated (owner_id, updated_at, id),
+  CONSTRAINT chk_collections_name CHECK (CHAR_LENGTH(TRIM(name)) > 0),
+  CONSTRAINT fk_collections_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+-- Every selected member can read the collection and add/remove its documents.
+-- The owner is implicit in collections.owner_id and is not duplicated here.
+CREATE TABLE collection_members (
+  collection_id CHAR(36)    NOT NULL,
+  user_id       CHAR(36)    NOT NULL,
+  created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (collection_id, user_id),
+  KEY idx_collection_members_user (user_id, created_at, collection_id),
+  CONSTRAINT fk_collection_members_collection FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+  CONSTRAINT fk_collection_members_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE collection_documents (
+  collection_id CHAR(36)    NOT NULL,
+  doc_id        CHAR(36)    NOT NULL,
+  added_at      DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (collection_id, doc_id),
+  KEY idx_collection_documents_added (collection_id, added_at, doc_id),
+  KEY idx_collection_documents_doc (doc_id, collection_id),
+  CONSTRAINT fk_collection_documents_collection FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+  CONSTRAINT fk_collection_documents_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE collection_notifications (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  recipient_id CHAR(36) NOT NULL,
+  actor_id CHAR(36) NULL,
+  collection_id CHAR(36) NOT NULL,
+  kind ENUM('collection_shared', 'collection_left') NOT NULL,
+  read_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  KEY idx_collection_notifications_inbox (recipient_id, read_at, created_at, id),
+  CONSTRAINT fk_collection_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_collection_notifications_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_collection_notifications_collection FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE human_annotations (
   id          CHAR(36)     NOT NULL PRIMARY KEY,
   doc_id      CHAR(36)     NOT NULL,
-  author_id   CHAR(36)     NOT NULL,
+  author_id   CHAR(36)     NULL,
   parent_id   CHAR(36)     NULL,
   parent_kind VARCHAR(8)   NULL,
   thread_root_id CHAR(36)  NULL,
@@ -55,7 +122,7 @@ CREATE TABLE human_annotations (
   KEY idx_human_annotations_parent (parent_kind, parent_id),
   KEY idx_human_annotations_thread (doc_id, thread_root_kind, thread_root_id),
   CONSTRAINT fk_human_annotations_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
-  CONSTRAINT fk_human_annotations_author FOREIGN KEY (author_id) REFERENCES users(id)
+  CONSTRAINT fk_human_annotations_author FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE agent_annotations (
@@ -65,6 +132,9 @@ CREATE TABLE agent_annotations (
   agent_version  VARCHAR(32)  NOT NULL,
   run_id         CHAR(36)     NOT NULL,
   owner_id       CHAR(36)     NULL,
+  owner_name     VARCHAR(255) NULL,
+  lens_name      VARCHAR(120) NULL,
+  lens_color     VARCHAR(7)   NULL,
   anchor         LONGTEXT     NOT NULL, -- JSON
   evidence_span  LONGTEXT     NOT NULL, -- JSON CharRange; required, server-verified (docs/02-decisions.md #6)
   comment        LONGTEXT     NOT NULL,
@@ -145,7 +215,7 @@ CREATE TABLE lenses (
 CREATE TABLE notifications (
   id CHAR(36) NOT NULL PRIMARY KEY,
   recipient_id CHAR(36) NOT NULL,
-  actor_id CHAR(36) NOT NULL,
+  actor_id CHAR(36) NULL,
   doc_id CHAR(36) NOT NULL,
   reply_id CHAR(36) NOT NULL,
   parent_id CHAR(36) NOT NULL,
@@ -153,8 +223,8 @@ CREATE TABLE notifications (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   UNIQUE KEY uq_notifications_reply (recipient_id, reply_id),
   KEY idx_notifications_inbox (recipient_id, read_at, created_at, id),
-  CONSTRAINT fk_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id),
-  CONSTRAINT fk_notifications_actor FOREIGN KEY (actor_id) REFERENCES users(id),
+  CONSTRAINT fk_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_notifications_actor FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_notifications_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
   CONSTRAINT fk_notifications_reply FOREIGN KEY (reply_id) REFERENCES human_annotations(id) ON DELETE CASCADE,
   CONSTRAINT fk_notifications_parent FOREIGN KEY (parent_id) REFERENCES human_annotations(id) ON DELETE CASCADE
@@ -177,8 +247,8 @@ CREATE TABLE annotation_votes (
   CONSTRAINT chk_annotation_vote_value CHECK (value IN (-1, 1)),
   CONSTRAINT chk_annotation_vote_kind CHECK (annotation_kind IN ('human', 'agent')),
   CONSTRAINT fk_annotation_votes_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
-  CONSTRAINT fk_annotation_votes_voter FOREIGN KEY (voter_id) REFERENCES users(id),
-  CONSTRAINT fk_annotation_votes_recipient FOREIGN KEY (recipient_id) REFERENCES users(id)
+  CONSTRAINT fk_annotation_votes_voter FOREIGN KEY (voter_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_annotation_votes_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE vote_notifications (
@@ -186,7 +256,7 @@ CREATE TABLE vote_notifications (
   doc_id CHAR(36) NOT NULL,
   annotation_id CHAR(36) NOT NULL,
   annotation_kind VARCHAR(8) NOT NULL,
-  voter_id CHAR(36) NOT NULL,
+  voter_id CHAR(36) NULL,
   recipient_id CHAR(36) NOT NULL,
   kind VARCHAR(20) NOT NULL,
   read_at DATETIME(3) NULL,
@@ -194,6 +264,6 @@ CREATE TABLE vote_notifications (
   KEY idx_vote_notifications_inbox (recipient_id, read_at, created_at, id),
   CONSTRAINT chk_vote_notification_kind CHECK (kind IN ('upvote', 'downvote', 'cancel_upvote', 'cancel_downvote')),
   CONSTRAINT fk_vote_notifications_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
-  CONSTRAINT fk_vote_notifications_voter FOREIGN KEY (voter_id) REFERENCES users(id),
-  CONSTRAINT fk_vote_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id)
+  CONSTRAINT fk_vote_notifications_voter FOREIGN KEY (voter_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_vote_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;

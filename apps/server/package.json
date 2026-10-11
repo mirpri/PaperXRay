@@ -13,9 +13,14 @@
     "db:providers": "tsx src/db/setup-providers.ts",
     "db:comments": "tsx src/db/setup-comments.ts",
     "db:install": "tsx src/db/install.ts",
+    "db:membership": "tsx src/db/setup-membership.ts",
+    "db:user-deletion": "tsx src/db/setup-user-deletion.ts",
     "eval": "tsx src/eval/run-eval.ts",
     "db:lens-colors": "tsx src/db/setup-lens-colors.ts",
     "db:notifications": "tsx src/db/setup-notifications.ts",
+    "db:library": "tsx src/db/setup-library.ts",
+    "db:collections": "tsx src/db/setup-collections.ts",
+    "db:titles": "tsx src/db/setup-document-titles.ts",
     "db:votes": "tsx src/db/setup-votes.ts"
   },
   "dependencies": {
