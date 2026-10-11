@@ -33,7 +33,7 @@ export const config = {
     // runtime, this is just what unblocks local dev out of the box.
     mirpassClientId: process.env.MIRPASS_CLIENT_ID ?? "",
     mirpassClientSecret: process.env.MIRPASS_CLIENT_SECRET ?? "",
-    mirpassRedirectUri: required("MIRPASS_REDIRECT_URI", "http://localhost:3001/api/auth/callback"),
+    mirpassRedirectUri: `${required("BACKEND_URI", "http://localhost:3001")}/api/auth/callback`,
     adminEmails: (process.env.ADMIN_EMAILS ?? "")
       .split(",")
       .map((e) => e.trim().toLowerCase())

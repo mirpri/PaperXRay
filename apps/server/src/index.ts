@@ -2,6 +2,8 @@ import { createServer } from "node:http";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import express, { type ErrorRequestHandler } from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { attachUser } from "./auth/middleware.js";
 import { healthRouter } from "./routes/health.js";
@@ -21,6 +23,9 @@ import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/reposit
 import { seedPresetLenses } from "./db/lens-repository.js";
 import { PRESET_LENSES } from "./lenses/presets.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 app.use(cors({ origin: config.webOrigin, credentials: true }));
 app.use(express.json());
@@ -39,6 +44,15 @@ app.use("/api", providersRouter);
 app.use("/api", notificationsRouter);
 app.use("/api", votesRouter);
 app.use("/api", invitationsRouter);
+
+// Serve frontend static files
+const frontendDistPath = path.join(__dirname, "../../web/dist");
+app.use(express.static(frontendDistPath));
+
+// SPA fallback - serve index.html for all non-API routes
+app.get("*", (req, res) => {
+  res.sendFile(path.join(frontendDistPath, "index.html"));
+});
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   console.error(err);

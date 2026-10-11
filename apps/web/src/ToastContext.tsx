@@ -4,10 +4,11 @@ interface Toast {
   id: number;
   message: string;
   type: "success" | "error" | "info";
+  onDismiss?: () => void;
 }
 
 interface ToastContextValue {
-  showToast: (message: string, type?: "success" | "error" | "info") => void;
+  showToast: (message: string, type?: "success" | "error" | "info", onDismiss?: () => void) => void;
 }
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -17,11 +18,17 @@ let nextId = 1;
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
-  const showToast = useCallback((message: string, type: "success" | "error" | "info" = "success") => {
+  const showToast = useCallback((message: string, type: "success" | "error" | "info" = "success", onDismiss?: () => void) => {
     const id = nextId++;
-    setToasts(current => [...current, { id, message, type }]);
+    setToasts(current => [...current, { id, message, type, onDismiss }]);
     window.setTimeout(() => {
-      setToasts(current => current.filter(t => t.id !== id));
+      setToasts(current => {
+        const toast = current.find(t => t.id === id);
+        if (toast?.onDismiss) {
+          toast.onDismiss();
+        }
+        return current.filter(t => t.id !== id);
+      });
     }, 4000);
   }, []);
 

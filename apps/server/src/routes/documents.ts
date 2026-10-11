@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { pdfPathForHash, writePdf } from "../storage/document-files.js";
+import { pdfPathForHash, writePdf, deleteDocumentFiles } from "../storage/document-files.js";
 import { Router, type Router as RouterType } from "express";
 import type { AgentAnnotation, Document, LensSpec, Node as IrNode } from "@paper-xray/contracts";
 import { sanitizeLensItems } from "@paper-xray/contracts";
@@ -12,13 +12,14 @@ import { runOrgLens } from "../lenses/run-org-lens.js";
 import { lensItemsToCandidates } from "../lenses/run-model-lens.js";
 import { findLensById } from "../db/lens-repository.js";
 import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
-import { requireAuth } from "../auth/middleware.js";
+import { requireAuth, requireRole } from "../auth/middleware.js";
 import { normalizePaperUrl } from "../import/normalize-url.js";
 import { fetchPdf, ImportError } from "../import/safe-fetch.js";
 import {
   createDocumentWithNodes,
   findDocumentByContentHash,
   findDocumentById,
+  deleteDocument,
   getCharMapForDocument,
   insertAgentAnnotations,
   listAgentAnnotationsForDoc,
@@ -173,6 +174,20 @@ documentsRouter.get("/documents/:id/file", requireAuth, async (req, res, next) =
     const bytes = await readFile(pdfPathForHash(document.contentHash));
     res.setHeader("Content-Type", "application/pdf");
     res.send(bytes);
+  } catch (err) {
+    next(err);
+  }
+});
+
+documentsRouter.delete("/documents/:id", requireRole("admin"), async (req, res, next) => {
+  try {
+    const result = await deleteDocument(req.params.id);
+    if (!result) {
+      res.status(404).json({ error: "Document not found" });
+      return;
+    }
+    await deleteDocumentFiles(result.contentHash);
+    res.status(204).send();
   } catch (err) {
     next(err);
   }

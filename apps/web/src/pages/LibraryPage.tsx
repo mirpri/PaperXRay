@@ -282,11 +282,13 @@ export function LibraryPage() {
               {search ? "No papers match your search." : "No papers yet — upload a PDF to get started."}
             </p> : <ul className="pxr-library-list">
               {result.documents.map(doc => <DocumentListItem key={doc.id} document={doc} canEdit={user?.role === "admin"}
-                onChanged={() => setRefresh(value => value + 1)} />)}
-            </ul>}
-            <LibraryPagination result={result} onPage={next => { changeQuery({ page: next }); resultsSection.current?.scrollIntoView({ block: "start" }); }}
-              onPageSize={size => { changeQuery({ pageSize: size, page: 1 }); resultsSection.current?.scrollIntoView({ block: "start" }); }} />
-          </>}
+                          canDelete={user?.role === "admin"}
+                          onChanged={() => setRefresh(value => value + 1)}
+                          onDeleted={() => setRefresh(value => value + 1)} />)}
+                      </ul>}
+                      <LibraryPagination result={result} onPage={next => { changeQuery({ page: next }); resultsSection.current?.scrollIntoView({ block: "start" }); }}
+                        onPageSize={size => { changeQuery({ pageSize: size, page: 1 }); resultsSection.current?.scrollIntoView({ block: "start" }); }} />
+                    </>}
         </section>
       </main>
     </div>

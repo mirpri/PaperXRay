@@ -99,6 +99,14 @@ export async function findDocumentById(id: string): Promise<Document | null> {
   return rows[0] ? toDocument(rows[0]) : null;
 }
 
+export async function deleteDocument(id: string): Promise<{ contentHash: string } | null> {
+  const doc = await findDocumentById(id);
+  if (!doc) return null;
+  
+  await pool.query("DELETE FROM documents WHERE id = ?", [id]);
+  return { contentHash: doc.contentHash };
+}
+
 interface NodeRow extends RowDataPacket {
   id: string;
   doc_id: string;

@@ -41,3 +41,9 @@ export async function readNormalizedText(contentHash: string): Promise<string> {
 export async function readCharMap(contentHash: string): Promise<CharMap> {
   return JSON.parse(await readFile(documentPath(contentHash, ".charmap.json"), "utf8")) as CharMap;
 }
+
+export async function deleteDocumentFiles(contentHash: string): Promise<void> {
+  await rm(pdfPathForHash(contentHash), { force: true });
+  await rm(documentPath(contentHash, ".txt"), { force: true });
+  await rm(documentPath(contentHash, ".charmap.json"), { force: true });
+}

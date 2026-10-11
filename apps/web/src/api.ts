@@ -168,6 +168,16 @@ export async function updateDocumentTitle(docId: string, title: string): Promise
   return (await jsonOrThrow<{ document: DocumentSummary }>(res, "Failed to update title")).document;
 }
 
+export async function deleteDocument(docId: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/documents/${encodeURIComponent(docId)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    await jsonOrThrow(res, "Failed to delete document");
+  }
+}
+
 export async function fetchDocument(docId: string): Promise<Document> {
   const res = await fetch(`${API_BASE}/documents/${docId}`, { credentials: "include" });
   if (!res.ok) {

@@ -82,6 +82,7 @@ export function Header({ left, right }: { left?: ReactNode; right?: ReactNode })
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {right}
         <nav style={{ display: "flex", gap: 14, fontSize: 12 }}>
+          <Link to="/library">Library</Link>
           <Link to="/messages" className="pxr-messages-link" aria-label={unreadCount ? `Messages, ${unreadCount} unread` : "Messages"}>
             Messages
             {unreadCount > 0 && <><span className="pxr-unread-dot" aria-hidden="true" /><span className="mono pxr-unread-count" aria-hidden="true">{unreadCount}</span></>}

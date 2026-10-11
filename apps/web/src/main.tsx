@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import "./index.css";
 import { AuthProvider } from "./auth/AuthContext";
 import { RequireAuth } from "./auth/RequireAuth";
+import { HomePage } from "./pages/HomePage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ReaderPage } from "./pages/ReaderPage";
 import { LensesPage } from "./pages/LensesPage";
@@ -20,7 +21,8 @@ createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <Routes>
           <Route path="/invitation" element={<InvitationPage />} />
-          <Route path="/" element={<RequireAuth><NotificationProvider><ToastProvider><LibraryPage /></ToastProvider></NotificationProvider></RequireAuth>} />
+          <Route path="/" element={<RequireAuth><NotificationProvider><ToastProvider><HomePage /></ToastProvider></NotificationProvider></RequireAuth>} />
+          <Route path="/library" element={<RequireAuth><NotificationProvider><ToastProvider><LibraryPage /></ToastProvider></NotificationProvider></RequireAuth>} />
           <Route path="/documents/:id" element={<RequireAuth><NotificationProvider><ToastProvider><ReaderPage /></ToastProvider></NotificationProvider></RequireAuth>} />
           <Route path="/lenses" element={<RequireAuth><NotificationProvider><ToastProvider><LensesPage /></ToastProvider></NotificationProvider></RequireAuth>} />
           <Route path="/admin" element={<RequireAuth><NotificationProvider><ToastProvider><AdminPage /></ToastProvider></NotificationProvider></RequireAuth>} />

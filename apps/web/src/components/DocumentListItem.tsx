@@ -1,22 +1,27 @@
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import type { DocumentSummary } from "@paper-xray/contracts";
-import { updateDocumentTitle } from "../api";
+import { updateDocumentTitle, deleteDocument } from "../api";
+import { useToast } from "../ToastContext";
 
-export function DocumentListItem({ document: doc, canEdit, onChanged }: {
+export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged, onDeleted }: {
   document: DocumentSummary;
   canEdit: boolean;
+  canDelete?: boolean;
   onChanged: (document: DocumentSummary) => void;
+  onDeleted?: (docId: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [initial, setInitial] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const pending = useRef(false);
   const editButton = useRef<HTMLButtonElement>(null);
   const title = doc.title ?? `Untitled (${doc.contentHash.slice(0, 8)})`;
+  const { showToast } = useToast();
 
   function close() {
     if (pending.current) return;
@@ -40,6 +45,28 @@ export function DocumentListItem({ document: doc, canEdit, onChanged }: {
     }
   }
 
+  async function handleDelete() {
+    if (!confirmingDelete) {
+      setConfirmingDelete(true);
+      showToast("Click again to confirm deletion", "info", () => {
+        setConfirmingDelete(false);
+      });
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteDocument(doc.id);
+      showToast("Document deleted successfully", "success");
+      onDeleted?.(doc.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setConfirmingDelete(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return <li className="pxr-library-item">
     <div className="pxr-library-row">
       {editing && canEdit ? <form className="pxr-library-title-form" onSubmit={save}
@@ -58,6 +85,10 @@ export function DocumentListItem({ document: doc, canEdit, onChanged }: {
         {canEdit && <button ref={editButton} className="pxr-library-edit" type="button" title="Edit title" aria-label={`Edit title: ${title}`}
           onClick={() => { setDraft(doc.title ?? ""); setInitial((doc.title ?? "").trim()); setError(null); setEditing(true); }}>
           <Pencil size={13} aria-hidden="true" />
+        </button>}
+        {canDelete && <button className="pxr-library-edit" type="button" title={confirmingDelete ? "Click again to confirm delete" : "Delete document"} aria-label={`Delete: ${title}`}
+          onClick={handleDelete} disabled={busy} style={{ color: confirmingDelete ? "#B42318" : undefined }}>
+          <Trash2 size={13} aria-hidden="true" />
         </button>}
         <span className="pxr-library-meta mono">{doc.pageCount} pages · {new Date(doc.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
       </>}
