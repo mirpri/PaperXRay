@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { LogOut, User } from "lucide-react";
+import { LogOut, MessageSquare, MessageSquareWarningIcon, Settings, User } from "lucide-react";
 import { useNotifications } from "../NotificationContext";
 import { useAuth } from "../auth/AuthContext";
 import { Avatar } from "./Avatar";
@@ -81,15 +81,18 @@ export function Header({ left, right }: { left?: ReactNode; right?: ReactNode })
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         {right}
-        <nav style={{ display: "flex", gap: 14, fontSize: 12 }}>
+        <nav style={{ display: "flex", gap: 14, fontSize: 12, alignItems: "center" }}>
           <Link to="/library">Library</Link>
-          <Link to="/messages" className="pxr-messages-link" aria-label={unreadCount ? `Messages, ${unreadCount} unread` : "Messages"}>
-            Messages
-            {unreadCount > 0 && <><span className="pxr-unread-dot" aria-hidden="true" /><span className="mono pxr-unread-count" aria-hidden="true">{unreadCount}</span></>}
-          </Link>
           <Link to="/collections">Collections</Link>
           <Link to="/lenses">Lenses</Link>
-          <Link to="/admin">{user.role === "admin" ? "Admin" : "Settings"}</Link>
+          |
+          <Link to="/admin" style={{ display: "inline-flex", alignItems: "center" }}><Settings size={16} strokeWidth={1.75} aria-hidden="true" /></Link>
+          <Link to="/messages" className="pxr-messages-link" aria-label={unreadCount ? `Messages, ${unreadCount} unread` : "Messages"}>
+            
+            {unreadCount > 0 ? <><MessageSquareWarningIcon size={16} strokeWidth={1.75} aria-hidden="true" /><span aria-hidden="true">{unreadCount}</span></>
+             : 
+             <MessageSquare size={16} strokeWidth={1.75} aria-hidden="true" />}
+          </Link>
         </nav>
         <div ref={menuRef} style={{ position: "relative" }}>
           <div

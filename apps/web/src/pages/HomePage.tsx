@@ -55,12 +55,15 @@ export function HomePage() {
           display: "grid", 
           gridTemplateColumns: "1fr 1fr", 
           gap: 32,
-          marginTop: 48
+          marginTop: 48,
+          overflow: "hidden"
         }}>
           {/* Left Column: Recent Papers */}
           <section style={{ 
             borderRight: "1px solid var(--border)",
-            paddingRight: 32
+            paddingRight: 32,
+            minWidth: 0,
+            overflow: "hidden"
           }}>
             <div style={{ 
               display: "flex", 
@@ -86,9 +89,9 @@ export function HomePage() {
                 No papers yet. Upload your first paper to get started.
               </p>
             ) : (
-              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8, width: "100%" }}>
                 {recentDocs.map(doc => (
-                  <li key={doc.id}>
+                  <li key={doc.id} style={{ width: "100%", overflow: "hidden" }}>
                     <Link 
                       to={`/documents/${doc.id}`}
                       style={{
@@ -99,7 +102,11 @@ export function HomePage() {
                         borderRadius: 4,
                         textDecoration: "none",
                         color: "var(--text)",
-                        transition: "border-color 0.15s"
+                        transition: "border-color 0.15s",
+                        width: "100%",
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
+                        overflow: "hidden"
                       }}
                       onMouseEnter={e => e.currentTarget.style.borderColor = "var(--border-strong)"}
                       onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}
@@ -150,7 +157,10 @@ export function HomePage() {
           </section>
 
           {/* Right Column: Collections */}
-          <section>
+          <section style={{
+            minWidth: 0,
+            overflow: "hidden"
+          }}>
             <div style={{ 
               display: "flex", 
               alignItems: "center", 
@@ -175,9 +185,9 @@ export function HomePage() {
                 No collections yet. Create your first collection to organize papers.
               </p>
             ) : (
-              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
+              <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8, width: "100%" }}>
                 {collections.slice(0, 5).map(collection => (
-                  <li key={collection.id}>
+                  <li key={collection.id} style={{ width: "100%", overflow: "hidden" }}>
                     <Link 
                       to={`/collections/${collection.id}`}
                       style={{
@@ -188,7 +198,11 @@ export function HomePage() {
                         borderRadius: 4,
                         textDecoration: "none",
                         color: "var(--text)",
-                        transition: "border-color 0.15s"
+                        transition: "border-color 0.15s",
+                        width: "100%",
+                        maxWidth: "100%",
+                        boxSizing: "border-box",
+                        overflow: "hidden"
                       }}
                       onMouseEnter={e => e.currentTarget.style.borderColor = "var(--border-strong)"}
                       onMouseLeave={e => e.currentTarget.style.borderColor = "var(--border)"}
