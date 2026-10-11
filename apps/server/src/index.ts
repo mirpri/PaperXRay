@@ -15,6 +15,7 @@ import { votesRouter } from "./routes/votes.js";
 import { notificationsRouter } from "./routes/notifications.js";
 import { providersRouter } from "./routes/providers.js";
 import { lensesRouter } from "./routes/lenses.js";
+import { invitationsRouter } from "./routes/invitations.js";
 import { initSocket } from "./realtime/socket.js";
 import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/repositories.js";
 import { seedPresetLenses } from "./db/lens-repository.js";
@@ -37,6 +38,7 @@ app.use("/api", lensesRouter);
 app.use("/api", providersRouter);
 app.use("/api", notificationsRouter);
 app.use("/api", votesRouter);
+app.use("/api", invitationsRouter);
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   console.error(err);

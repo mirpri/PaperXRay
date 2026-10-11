@@ -3,7 +3,7 @@ import { requireAuth } from "../auth/middleware.js";
 import { deleteProvider, findProvider, listProviders, ProviderConflict, saveProvider } from "../db/providers.js";
 import { validateProvider } from "../lenses/validate-provider.js";
 export const providersRouter: RouterType = Router();
-providersRouter.use(requireAuth);
+providersRouter.use("/providers", requireAuth);
 providersRouter.get("/providers", async (req, res, next) => {
   try { res.json({ providers: await listProviders(req.user!.id) }); } catch (err) { next(err); }
 });

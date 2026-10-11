@@ -40,6 +40,27 @@ CREATE TABLE users (
   UNIQUE KEY uq_users_sso_sub (sso_sub)
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE invitations (
+  id            CHAR(36)     NOT NULL PRIMARY KEY,
+  code          VARCHAR(64)  NOT NULL,
+  created_by    CHAR(36)     NOT NULL,
+  email         VARCHAR(255) NULL,
+  role          VARCHAR(16)  NOT NULL DEFAULT 'member',
+  used_at       DATETIME(3)  NULL,
+  used_by       CHAR(36)     NULL,
+  expires_at    DATETIME(3)  NULL,
+  created_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_invitations_code (code),
+  KEY idx_invitations_created_by (created_by),
+  KEY idx_invitations_used_by (used_by)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE org_settings (
+  setting_key   VARCHAR(64)  NOT NULL PRIMARY KEY,
+  setting_value TEXT         NOT NULL,
+  updated_at    DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
 -- Personal collections reference the shared organization library; they never own PDFs.
 CREATE TABLE membership_notifications (
   id CHAR(36) NOT NULL PRIMARY KEY,

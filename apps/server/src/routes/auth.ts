@@ -14,7 +14,7 @@ export const authRouter: RouterType = Router();
  * Works against any IdP that speaks this protocol; the endpoints/clientId
  * come from the admin-configurable sso_config row (defaults to mirpass).
  */
-authRouter.get("/auth/login", async (_req, res, next) => {
+authRouter.get("/auth/login", async (req, res, next) => {
   try {
     const sso = await getSsoConfig();
     if (!sso.clientId) {
@@ -24,7 +24,8 @@ authRouter.get("/auth/login", async (_req, res, next) => {
 
     const state = generateState();
     const codeVerifier = generateCodeVerifier();
-    setOAuthStateCookie(res, state, codeVerifier);
+    const invitationCode = req.query.invitation as string | undefined;
+    setOAuthStateCookie(res, state, codeVerifier, invitationCode);
 
     const url = new URL(sso.authorizationEndpoint);
     url.searchParams.set("client_id", sso.clientId);
@@ -122,6 +123,7 @@ authRouter.get("/auth/callback", async (req, res, next) => {
       email,
       displayName,
       isBootstrapAdmin,
+      invitationCode: saved.invitationCode,
     });
 
     if (user.status === "pending") {

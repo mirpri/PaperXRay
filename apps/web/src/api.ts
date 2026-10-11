@@ -295,6 +295,73 @@ export async function deleteUser(userId: string): Promise<void> {
   if (!res.ok) await jsonOrThrow(res, "Failed to delete user");
 }
 
+export interface Invitation {
+  id: string;
+  code: string;
+  email: string | null;
+  role: Role;
+  expiresAt: string | null;
+  usedAt: string | null;
+  usedBy: string | null;
+  usedByName: string | null;
+  createdAt: string;
+}
+
+export type RegistrationMode = "invite_only" | "approval_required" | "open";
+
+export async function fetchInvitations(): Promise<Invitation[]> {
+  const res = await fetch(`${API_BASE}/admin/invitations`, { credentials: "include" });
+  return jsonOrThrow<Invitation[]>(res, "Failed to load invitations");
+}
+
+export async function createInvitation(params: {
+  email?: string;
+  role: Role;
+  expiresInDays?: number;
+}): Promise<Invitation> {
+  const res = await fetch(`${API_BASE}/admin/invitations`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+  return jsonOrThrow<Invitation>(res, "Failed to create invitation");
+}
+
+export async function deleteInvitation(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/invitations/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) await jsonOrThrow(res, "Failed to delete invitation");
+}
+
+export async function fetchRegistrationMode(): Promise<RegistrationMode> {
+  const res = await fetch(`${API_BASE}/admin/registration-mode`, { credentials: "include" });
+  const data = await jsonOrThrow<{ mode: RegistrationMode }>(res, "Failed to load registration mode");
+  return data.mode;
+}
+
+export async function setRegistrationMode(mode: RegistrationMode): Promise<void> {
+  const res = await fetch(`${API_BASE}/admin/registration-mode`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode }),
+  });
+  if (!res.ok) await jsonOrThrow(res, "Failed to set registration mode");
+}
+
+export async function validateInvitationCode(code: string): Promise<{
+  valid: boolean;
+  role?: Role;
+  email?: string | null;
+  error?: string;
+}> {
+  const res = await fetch(`${API_BASE}/public/invitations/validate/${encodeURIComponent(code)}`);
+  return jsonOrThrow(res, "Failed to validate invitation");
+}
+
 export const ACCOUNT_MANAGEMENT_URL_CHANGED = "pxr:account-management-url-changed";
 export async function fetchAccountManagementUrl(): Promise<string | null> {
   const res = await fetch(`${API_BASE}/auth/account-management`, { credentials: "include", cache: "no-store" });

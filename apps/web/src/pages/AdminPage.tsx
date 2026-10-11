@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { Role, SsoConfigPublic, User } from "@paper-xray/contracts";
-import { approveUser, deleteUser, exportSsoConfigJson, fetchSsoConfig, fetchUserDeletionPreview, fetchUsers, saveSsoConfig, setUserRole, type UserDeletionPreview } from "../api";
+import { approveUser, deleteUser, exportSsoConfigJson, fetchSsoConfig, fetchUserDeletionPreview, fetchUsers, saveSsoConfig, setUserRole, type UserDeletionPreview, fetchInvitations, createInvitation, deleteInvitation, fetchRegistrationMode, setRegistrationMode, type Invitation, type RegistrationMode } from "../api";
 import { useNotifications } from "../NotificationContext";
 import { useAuth } from "../auth/AuthContext";
 import { useToast } from "../ToastContext";
@@ -26,7 +26,7 @@ const SSO_FIELDS: Array<[keyof Omit<SsoConfigPublic, "hasClientSecret">, string]
   ["accountManagementUrl", "ACCOUNT MANAGEMENT URL"],
 ];
 
-type AdminSection = "providers" | "users" | "sso";
+type AdminSection = "providers" | "users" | "invitations" | "sso";
 
 /** Admin panel: roles (docs/02-decisions.md #4) and the org's OAuth2 SSO settings (#11). */
 export function AdminPage() {
@@ -49,6 +49,13 @@ export function AdminPage() {
   const [ssoBusy, setSsoBusy] = useState(false);
   const ssoFileInput = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [invitations, setInvitations] = useState<Invitation[] | null>(null);
+  const [registrationMode, setRegistrationModeState] = useState<RegistrationMode>("approval_required");
+  const [showCreateInvitation, setShowCreateInvitation] = useState(false);
+  const [newInvitationEmail, setNewInvitationEmail] = useState("");
+  const [newInvitationRole, setNewInvitationRole] = useState<Role>("member");
+  const [newInvitationExpiry, setNewInvitationExpiry] = useState("7");
+  const [creatingInvitation, setCreatingInvitation] = useState(false);
 
   useEffect(() => {
     if (me?.role !== "admin") return;
@@ -59,6 +66,13 @@ export function AdminPage() {
     if (me?.role === "admin") fetchUsers().then(setUsers).catch(err => setError(String(err)));
   }, [me?.role, revision]);
 
+  useEffect(() => {
+    if (me?.role === "admin") {
+      fetchInvitations().then(setInvitations).catch(err => setError(String(err)));
+      fetchRegistrationMode().then(setRegistrationModeState).catch(err => setError(String(err)));
+    }
+  }, [me?.role]);
+
   async function approve(user: User) {
     if (approving) return;
     setApproving(user.id); setError(null);
@@ -68,6 +82,55 @@ export function AdminPage() {
       showToast(`${updated.displayName} has been approved.`);
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setApproving(null); }
+  }
+
+  async function handleCreateInvitation() {
+    if (creatingInvitation) return;
+    setCreatingInvitation(true);
+    setError(null);
+    try {
+      const params: { email?: string; role: Role; expiresInDays?: number } = {
+        role: newInvitationRole,
+      };
+      if (newInvitationEmail.trim()) params.email = newInvitationEmail.trim();
+      if (newInvitationExpiry && newInvitationExpiry !== "never") {
+        params.expiresInDays = parseInt(newInvitationExpiry, 10);
+      }
+      const invitation = await createInvitation(params);
+      setInvitations(current => [invitation, ...(current ?? [])]);
+      setShowCreateInvitation(false);
+      setNewInvitationEmail("");
+      setNewInvitationRole("member");
+      setNewInvitationExpiry("7");
+      showToast("Invitation created successfully.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCreatingInvitation(false);
+    }
+  }
+
+  async function handleDeleteInvitation(id: string) {
+    if (!confirm("Are you sure you want to delete this invitation?")) return;
+    setError(null);
+    try {
+      await deleteInvitation(id);
+      setInvitations(current => (current ?? []).filter(inv => inv.id !== id));
+      showToast("Invitation deleted.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function handleRegistrationModeChange(mode: RegistrationMode) {
+    setError(null);
+    try {
+      await setRegistrationMode(mode);
+      setRegistrationModeState(mode);
+      showToast(`Registration mode updated to: ${mode.replace("_", " ")}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
   }
 
   if (me?.role !== "admin") {
@@ -222,6 +285,22 @@ export function AdminPage() {
             </button>
             <button
               type="button"
+              onClick={() => setActiveSection("invitations")}
+              style={{
+                padding: "10px 16px",
+                textAlign: "left",
+                border: "none",
+                background: activeSection === "invitations" ? "var(--surface)" : "transparent",
+                borderLeft: activeSection === "invitations" ? "3px solid var(--human)" : "3px solid transparent",
+                color: "var(--text)",
+                fontSize: 13,
+                cursor: "pointer",
+              }}
+            >
+              Invitations
+            </button>
+            <button
+              type="button"
               onClick={() => setActiveSection("sso")}
               style={{
                 padding: "10px 16px",
@@ -320,6 +399,198 @@ export function AdminPage() {
                             </td>
                           </tr>
                         ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeSection === "invitations" && (
+              <section>
+                <h2 className="pxr-section-title">INVITATIONS</h2>
+                <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "0 0 16px" }}>
+                  Manage invitation links and registration mode for new users.
+                </p>
+
+                <div style={{ marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, margin: "0 0 8px" }}>Registration Mode</h3>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="registrationMode"
+                        value="open"
+                        checked={registrationMode === "open"}
+                        onChange={() => handleRegistrationModeChange("open")}
+                      />
+                      <span style={{ fontSize: 13 }}>Open (anyone can register)</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="registrationMode"
+                        value="approval_required"
+                        checked={registrationMode === "approval_required"}
+                        onChange={() => handleRegistrationModeChange("approval_required")}
+                      />
+                      <span style={{ fontSize: 13 }}>Approval Required</span>
+                    </label>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                      <input
+                        type="radio"
+                        name="registrationMode"
+                        value="invite_only"
+                        checked={registrationMode === "invite_only"}
+                        onChange={() => handleRegistrationModeChange("invite_only")}
+                      />
+                      <span style={{ fontSize: 13 }}>Invite Only</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>Invitation Links</h3>
+                  <button
+                    type="button"
+                    className="pxr-btn pxr-btn-primary"
+                    onClick={() => setShowCreateInvitation(!showCreateInvitation)}
+                  >
+                    {showCreateInvitation ? "Cancel" : "Create Invitation"}
+                  </button>
+                </div>
+
+                {showCreateInvitation && (
+                  <div style={{ background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 4, padding: 16, marginBottom: 16 }}>
+                    <div style={{ display: "grid", gap: 12 }}>
+                      <div>
+                        <label className="pxr-label" htmlFor="invitation-email">EMAIL (OPTIONAL)</label>
+                        <input
+                          id="invitation-email"
+                          type="email"
+                          className="pxr-input"
+                          placeholder="Leave empty for anyone to use"
+                          value={newInvitationEmail}
+                          onChange={(e) => setNewInvitationEmail(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="pxr-label" htmlFor="invitation-role">ROLE</label>
+                        <select
+                          id="invitation-role"
+                          className="pxr-input"
+                          value={newInvitationRole}
+                          onChange={(e) => setNewInvitationRole(e.target.value as Role)}
+                        >
+                          {ROLES.map((r) => (
+                            <option key={r} value={r}>{r}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="pxr-label" htmlFor="invitation-expiry">EXPIRES IN</label>
+                        <select
+                          id="invitation-expiry"
+                          className="pxr-input"
+                          value={newInvitationExpiry}
+                          onChange={(e) => setNewInvitationExpiry(e.target.value)}
+                        >
+                          <option value="1">1 day</option>
+                          <option value="7">7 days</option>
+                          <option value="30">30 days</option>
+                          <option value="90">90 days</option>
+                          <option value="never">Never</option>
+                        </select>
+                      </div>
+                      <div>
+                        <button
+                          type="button"
+                          className="pxr-btn pxr-btn-primary"
+                          disabled={creatingInvitation}
+                          onClick={() => handleCreateInvitation()}
+                        >
+                          {creatingInvitation ? "Creating..." : "Create"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {invitations === null ? (
+                  <p style={{ fontSize: 13, color: "var(--text-muted)" }}>Loading…</p>
+                ) : invitations.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "var(--text-muted)" }}>No invitations created yet.</p>
+                ) : (
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13, background: "var(--surface)" }}>
+                      <thead>
+                        <tr style={{ textAlign: "left" }}>
+                          {["CODE", "EMAIL", "ROLE", "EXPIRES", "USED", ""].map((h, index) => (
+                            <th key={h || index} className="mono" style={{ fontSize: 10, fontWeight: 500, color: "var(--text-muted)", padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                              {h}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {invitations.map((inv) => {
+                          const isExpired = inv.expiresAt && new Date(inv.expiresAt) < new Date();
+                          const isUsed = !!inv.usedAt;
+                          const invitationUrl = `${window.location.origin}/invitation?code=${inv.code}`;
+                          return (
+                            <tr key={inv.id}>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                                <code style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-muted)" }}>
+                                  {inv.code}
+                                </code>
+                              </td>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                                {inv.email || "Anyone"}
+                              </td>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)" }}>
+                                {inv.role}
+                              </td>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: isExpired ? "#B42318" : "var(--text-muted)" }}>
+                                {inv.expiresAt ? new Date(inv.expiresAt).toLocaleDateString() : "Never"}
+                                {isExpired && " (expired)"}
+                              </td>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                                {isUsed ? (
+                                  <div>
+                                    <div>{inv.usedByName || "Unknown"}</div>
+                                    <div style={{ fontSize: 11, color: "var(--text-soft)" }}>
+                                      {new Date(inv.usedAt!).toLocaleDateString()}
+                                    </div>
+                                  </div>
+                                ) : "No"}
+                              </td>
+                              <td style={{ padding: "8px 10px", borderBottom: "1px solid var(--border)", textAlign: "right" }}>
+                                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                                  <button
+                                    type="button"
+                                    className="pxr-btn"
+                                    style={{ padding: "4px 8px", fontSize: 11 }}
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(invitationUrl);
+                                      showToast("Invitation link copied to clipboard");
+                                    }}
+                                    disabled={!!(isUsed || isExpired)}
+                                  >
+                                    Copy
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="pxr-btn"
+                                    onClick={() => handleDeleteInvitation(inv.id)}
+                                    title="Delete invitation"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>

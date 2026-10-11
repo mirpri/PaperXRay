@@ -432,6 +432,7 @@ export async function upsertUserFromSso(params: {
   email: string;
   displayName: string;
   isBootstrapAdmin: boolean;
+  invitationCode?: string;
 }): Promise<User> {
   const [bySub] = await pool.query<UserRow[]>("SELECT * FROM users WHERE sso_sub = ? LIMIT 1", [
     params.ssoSub,
@@ -446,21 +447,71 @@ export async function upsertUserFromSso(params: {
     return toUser(byEmail[0]);
   }
 
+  // Check registration mode and invitation
+  const [modeRows] = await pool.query<RowDataPacket[]>(
+    "SELECT setting_value FROM org_settings WHERE setting_key = 'registration_mode'"
+  );
+  const registrationMode = modeRows[0]?.setting_value || "approval_required";
+
+  let role: Role = "member";
+  let status: "pending" | "active" = "pending";
+  let invitationId: string | null = null;
+
+  // Check if user has a valid invitation
+  if (params.invitationCode) {
+    const [invitationRows] = await pool.query<RowDataPacket[]>(
+      "SELECT id, email, role, expires_at, used_at FROM invitations WHERE code = ? AND used_at IS NULL",
+      [params.invitationCode]
+    );
+    
+    if (invitationRows[0]) {
+      const invitation = invitationRows[0];
+      const isExpired = invitation.expires_at && new Date(invitation.expires_at) < new Date();
+      const emailMatches = !invitation.email || invitation.email.toLowerCase() === params.email.toLowerCase();
+      
+      if (!isExpired && emailMatches) {
+        role = invitation.role as Role;
+        status = "active";
+        invitationId = invitation.id;
+      }
+    }
+  }
+
+  // Apply registration mode rules
+  if (!invitationId) {
+    const [activeAdmins] = await pool.query<RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1");
+    const bootstrap = params.isBootstrapAdmin && activeAdmins.length === 0;
+    
+    if (bootstrap) {
+      role = "admin";
+      status = "active";
+    } else if (registrationMode === "invite_only") {
+      throw new Error("Registration requires an invitation code");
+    } else if (registrationMode === "open") {
+      status = "active";
+    } else {
+      // approval_required (default)
+      status = "pending";
+    }
+  }
+
   const id = uuid();
-  const [activeAdmins] = await pool.query<RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1");
-  const bootstrap = params.isBootstrapAdmin && activeAdmins.length === 0;
-  const role: Role = bootstrap ? "admin" : "member";
-  const status = bootstrap ? "active" : "pending";
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
     await conn.query("INSERT INTO users (id, display_name, email, sso_sub, role, status) VALUES (?, ?, ?, ?, ?, ?)",
       [id, params.displayName, params.email, params.ssoSub, role, status]);
+    
     if (status === "pending") {
       const [admins] = await conn.query<RowDataPacket[]>("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
       if (admins.length) await conn.query("INSERT INTO membership_notifications (id, recipient_id, applicant_id) VALUES ?",
         [admins.map(admin => [uuid(), admin.id, id])]);
     }
+    
+    if (invitationId) {
+      await conn.query("UPDATE invitations SET used_at = NOW(3), used_by = ? WHERE id = ?", [id, invitationId]);
+    }
+    
     await conn.commit();
   } catch (err) {
     await conn.rollback();

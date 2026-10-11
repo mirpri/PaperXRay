@@ -12,8 +12,10 @@ import { sign, verify } from "./signed-value.js";
 const OAUTH_STATE_COOKIE_NAME = "pxr_oauth";
 const OAUTH_STATE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes — just long enough for a login round-trip
 
-export function setOAuthStateCookie(res: Response, state: string, codeVerifier: string): void {
-  const payload = `${state}:${codeVerifier}`;
+export function setOAuthStateCookie(res: Response, state: string, codeVerifier: string, invitationCode?: string): void {
+  const payload = invitationCode 
+    ? `${state}:${codeVerifier}:${invitationCode}`
+    : `${state}:${codeVerifier}`;
   res.cookie(OAUTH_STATE_COOKIE_NAME, sign(payload, config.session.secret), {
     httpOnly: true,
     sameSite: "lax",
@@ -25,12 +27,20 @@ export function setOAuthStateCookie(res: Response, state: string, codeVerifier: 
 
 export function readAndClearOAuthStateCookie(
   cookieValue: string | undefined,
-): { state: string; codeVerifier: string } | null {
+): { state: string; codeVerifier: string; invitationCode?: string } | null {
   const payload = verify(cookieValue, config.session.secret);
   if (!payload) return null;
-  const colon = payload.indexOf(":");
-  if (colon === -1) return null;
-  return { state: payload.slice(0, colon), codeVerifier: payload.slice(colon + 1) };
+  const firstColon = payload.indexOf(":");
+  if (firstColon === -1) return null;
+  const secondColon = payload.indexOf(":", firstColon + 1);
+  if (secondColon === -1) {
+    return { state: payload.slice(0, firstColon), codeVerifier: payload.slice(firstColon + 1) };
+  }
+  return {
+    state: payload.slice(0, firstColon),
+    codeVerifier: payload.slice(firstColon + 1, secondColon),
+    invitationCode: payload.slice(secondColon + 1),
+  };
 }
 
 export { OAUTH_STATE_COOKIE_NAME };
