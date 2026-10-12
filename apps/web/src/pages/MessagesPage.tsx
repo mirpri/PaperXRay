@@ -5,6 +5,7 @@ import { fetchNotifications, markAllMessagesRead, markMessageRead } from "../api
 import { useNotifications } from "../NotificationContext";
 import { Header } from "../components/Header";
 import { UserIdentity } from "../components/UserIdentity";
+import { useToast } from "../ToastContext";
 
 const messageDescriptions: Record<AnnotationNotification["kind"], string> = {
   reply: "replied to your comment",
@@ -19,21 +20,21 @@ const messageDescriptions: Record<AnnotationNotification["kind"], string> = {
 
 export function MessagesPage() {
   const { unreadCount, revision, refresh } = useNotifications();
+  const { showToast } = useToast();
   const navigate = useNavigate();
   const [messages, setMessages] = useState<AnnotationNotification[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const sequence = useRef(0);
   useEffect(() => {
     const request = ++sequence.current;
     setLoading(true); setLoadingMore(false);
     fetchNotifications().then(page => {
       if (sequence.current !== request) return;
-      setMessages(page.notifications); setCursor(page.nextCursor); setError(null);
-    }).catch(err => { if (sequence.current === request) setError(String(err)); })
+      setMessages(page.notifications); setCursor(page.nextCursor);
+    }).catch(err => { if (sequence.current === request) showToast(String(err), "error"); })
       .finally(() => { if (sequence.current === request) setLoading(false); });
     return () => { sequence.current++; };
   }, [revision]);
@@ -45,7 +46,7 @@ export function MessagesPage() {
       if (sequence.current !== request) return;
       setMessages(current => [...current, ...page.notifications.filter(item => !current.some(old => old.id === item.id))]);
       setCursor(page.nextCursor);
-    } catch (err) { if (sequence.current === request) setError(String(err)); }
+    } catch (err) { if (sequence.current === request) showToast(String(err), "error"); }
     finally { if (sequence.current === request) setLoadingMore(false); }
   }
   async function read(message: AnnotationNotification) {
@@ -56,17 +57,17 @@ export function MessagesPage() {
     }
   }
   async function open(event: MouseEvent<HTMLAnchorElement>, message: AnnotationNotification, url: string) {
-    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) { void read(message).catch(err => setError(String(err))); return; }
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) { void read(message).catch(err => showToast(String(err), "error")); return; }
     event.preventDefault();
-    try { await read(message); navigate(url); } catch (err) { setError(String(err)); }
+    try { await read(message); navigate(url); } catch (err) { showToast(String(err), "error"); }
   }
   async function readAll() {
-    setMarkingAll(true); setError(null);
+    setMarkingAll(true);
     try {
       await markAllMessagesRead();
       setMessages(current => current.map(item => ({ ...item, readAt: item.readAt ?? new Date().toISOString() })));
       await refresh();
-    } catch (err) { setError(String(err)); }
+    } catch (err) { showToast(String(err), "error"); }
     finally { setMarkingAll(false); }
   }
   return <div className="pxr-settings-page">
@@ -77,8 +78,7 @@ export function MessagesPage() {
           <div><h1>Messages</h1><p>{unreadCount ? `${unreadCount} unread` : "Replies and votes on your annotations appear here."}</p></div>
           <button type="button" className="pxr-btn" disabled={!unreadCount || markingAll} onClick={() => void readAll()}>{markingAll ? "Updating…" : "Mark all read"}</button>
         </div>
-        {error && <p role="alert" className="pxr-message-error">{error}</p>}
-        {loading && messages.length === 0 ? <p role="status">Loading messages…</p> : messages.length === 0 && !error ? <p className="pxr-message-empty">No messages yet.</p> : null}
+        {loading && messages.length === 0 ? <p role="status">Loading messages…</p> : messages.length === 0 ? <p className="pxr-message-empty">No messages yet.</p> : null}
         <ul className="pxr-message-list" aria-busy={loading}>
           {messages.map(message => {
             const isCollectionMessage = message.kind === "collection_shared" || message.kind === "collection_left";
@@ -94,8 +94,8 @@ export function MessagesPage() {
               {message.kind === "reply" && <blockquote>{message.parentPreview || "[Comment deleted]"}</blockquote>}
               <p className="pxr-message-preview">{message.preview}</p>
               <div className="pxr-message-footer">
-                <Link to={url} onClick={event => void open(event, message, url)} onAuxClick={event => { if (event.button === 1) void read(message).catch(err => setError(String(err))); }}>{isMembershipMessage ? "Review member" : isCollectionMessage ? "View collection" : message.kind === "reply" ? "View reply" : "View annotation"} →</Link>
-                {!message.readAt && <button type="button" onClick={() => { void read(message).catch(err => setError(String(err))); }}>Mark read</button>}
+                <Link to={url} onClick={event => void open(event, message, url)} onAuxClick={event => { if (event.button === 1) void read(message).catch(err => showToast(String(err), "error")); }}>{isMembershipMessage ? "Review member" : isCollectionMessage ? "View collection" : message.kind === "reply" ? "View reply" : "View annotation"} →</Link>
+                {!message.readAt && <button type="button" onClick={() => { void read(message).catch(err => showToast(String(err), "error")); }}>Mark read</button>}
               </div>
             </li>;
           })}

@@ -11,6 +11,8 @@ import type {
   CollectionMember,
   CollectionUserOption,
   LensDraft,
+  LensRunActivity,
+  AiReplyStarted,
   LensOutputItem,
   LensSpec,
   Node as IrNode,
@@ -402,12 +404,17 @@ export async function saveSsoConfig(
 }
 
 /** Runs an org lens on the server. */
-export async function runLens(docId: string, lensId: string): Promise<LensRunResult> {
+export async function runLens(docId: string, lensId: string): Promise<{ status: "queued" | "running" }> {
   const res = await fetch(`${API_BASE}/documents/${docId}/lenses/${lensId}/run`, {
     method: "POST",
     credentials: "include",
   });
-  return jsonOrThrow<LensRunResult>(res, "Lens run failed");
+  return jsonOrThrow(res, "Lens run failed");
+}
+
+export async function fetchLensRunStatus(docId: string): Promise<{ lensRuns: LensRun[]; activity: LensRunActivity[] }> {
+  const res = await fetch(`${API_BASE}/documents/${docId}/lens-runs`, { credentials: "include", cache: "no-store" });
+  return jsonOrThrow(res, "Failed to load lens run status");
 }
 
 export async function fetchLensRuns(docId: string): Promise<LensRun[]> {
@@ -469,6 +476,16 @@ export async function deleteComment(docId: string, id: string, version: number):
 }
 export async function replyToComment(docId: string, id: string, parentKind: "human" | "agent", body: string): Promise<void> {
   await jsonOrThrow(await sendJson("POST", `/documents/${docId}/annotations/${id}/replies`, { body, parentKind }), "Failed to reply");
+}
+
+export async function requestAiReply(docId: string, parentId: string, params: {
+  parentKind: "human" | "agent"; providerId: string; model: string;
+}): Promise<AiReplyStarted> {
+  return jsonOrThrow(await sendJson("POST", `/documents/${docId}/annotations/${parentId}/ai-replies`, params), "Failed to request AI reply");
+}
+
+export async function submitAiReplyResult(docId: string, replyId: string, body: string, failed = false): Promise<void> {
+  await jsonOrThrow(await sendJson("PUT", `/documents/${docId}/ai-replies/${replyId}/client-result`, { body, failed }), "Failed to save AI reply");
 }
 
 export async function fetchNotifications(before?: string): Promise<NotificationPage> {

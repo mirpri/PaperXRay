@@ -48,7 +48,6 @@ export function AdminPage() {
   const [clearSecret, setClearSecret] = useState(false);
   const [ssoBusy, setSsoBusy] = useState(false);
   const ssoFileInput = useRef<HTMLInputElement>(null);
-  const [error, setError] = useState<string | null>(null);
   const [invitations, setInvitations] = useState<Invitation[] | null>(null);
   const [registrationMode, setRegistrationModeState] = useState<RegistrationMode>("approval_required");
   const [showCreateInvitation, setShowCreateInvitation] = useState(false);
@@ -59,35 +58,34 @@ export function AdminPage() {
 
   useEffect(() => {
     if (me?.role !== "admin") return;
-    fetchSsoConfig().then(setSso).catch((err) => setError(String(err)));
+    fetchSsoConfig().then(setSso).catch((err) => showToast(String(err), "error"));
   }, [me?.role]);
 
   useEffect(() => {
-    if (me?.role === "admin") fetchUsers().then(setUsers).catch(err => setError(String(err)));
+    if (me?.role === "admin") fetchUsers().then(setUsers).catch(err => showToast(String(err), "error"));
   }, [me?.role, revision]);
 
   useEffect(() => {
     if (me?.role === "admin") {
-      fetchInvitations().then(setInvitations).catch(err => setError(String(err)));
-      fetchRegistrationMode().then(setRegistrationModeState).catch(err => setError(String(err)));
+      fetchInvitations().then(setInvitations).catch(err => showToast(String(err), "error"));
+      fetchRegistrationMode().then(setRegistrationModeState).catch(err => showToast(String(err), "error"));
     }
   }, [me?.role]);
 
   async function approve(user: User) {
     if (approving) return;
-    setApproving(user.id); setError(null);
+    setApproving(user.id);
     try {
       const updated = await approveUser(user.id);
       setUsers(current => (current ?? []).map(u => u.id === updated.id ? updated : u));
       showToast(`${updated.displayName} has been approved.`);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setApproving(null); }
   }
 
   async function handleCreateInvitation() {
     if (creatingInvitation) return;
     setCreatingInvitation(true);
-    setError(null);
     try {
       const params: { email?: string; role: Role; expiresInDays?: number } = {
         role: newInvitationRole,
@@ -104,7 +102,7 @@ export function AdminPage() {
       setNewInvitationExpiry("7");
       showToast("Invitation created successfully.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setCreatingInvitation(false);
     }
@@ -112,24 +110,22 @@ export function AdminPage() {
 
   async function handleDeleteInvitation(id: string) {
     if (!confirm("Are you sure you want to delete this invitation?")) return;
-    setError(null);
     try {
       await deleteInvitation(id);
       setInvitations(current => (current ?? []).filter(inv => inv.id !== id));
       showToast("Invitation deleted.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     }
   }
 
   async function handleRegistrationModeChange(mode: RegistrationMode) {
-    setError(null);
     try {
       await setRegistrationMode(mode);
       setRegistrationModeState(mode);
       showToast(`Registration mode updated to: ${mode.replace("_", " ")}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     }
   }
 
@@ -147,47 +143,45 @@ export function AdminPage() {
   }
 
   async function changeRole(user: User, role: Role) {
-    setError(null);
     try {
       const updated = await setUserRole(user.id, role);
       setUsers((current) => (current ?? []).map((u) => (u.id === updated.id ? updated : u)));
       showToast(`${updated.displayName} is now ${updated.role}.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     }
   }
 
   async function beginDelete(user: User) {
-    setError(null);
     if (user.status === "pending") {
       setDeleting(true);
       try {
         await deleteUser(user.id);
         setUsers(current => (current ?? []).filter(u => u.id !== user.id));
         showToast(`${user.displayName} was deleted. Future SSO logins require approval.`);
-      } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+      } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
       finally { setDeleting(false); }
     } else {
       try { setDeletePreview(await fetchUserDeletionPreview(user.id)); setDeleteConfirmation(""); }
-      catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+      catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     }
   }
 
   async function confirmDelete() {
     if (!deletePreview || deleteConfirmation.trim().toLowerCase() !== deletePreview.user.email.toLowerCase() || deleting) return;
-    setDeleting(true); setError(null);
+    setDeleting(true);
     try {
       await deleteUser(deletePreview.user.id);
       setUsers(current => (current ?? []).filter(user => user.id !== deletePreview.user.id));
       showToast(`${deletePreview.user.displayName} was deleted. Future SSO logins require approval.`);
       setDeletePreview(null);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setDeleting(false); }
   }
 
   async function importSso(file: File) {
     if (ssoBusy) return;
-    setSsoBusy(true); setError(null);
+    setSsoBusy(true);
     try {
       if (file.size > MAX_SSO_JSON_BYTES) throw new Error("SSO JSON must be 64 KB or smaller.");
       const { clientSecret, ...fields } = parseSsoConfigJson(await file.text());
@@ -195,13 +189,13 @@ export function AdminPage() {
       setNewSecret(clientSecret ?? "");
       setClearSecret(clientSecret === null || clientSecret === "");
       showToast("JSON imported. Save SSO settings to apply.");
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setSsoBusy(false); }
   }
 
   async function exportSso() {
     if (ssoBusy) return;
-    setSsoBusy(true); setError(null);
+    setSsoBusy(true);
     try {
       const blob = await exportSsoConfigJson();
       const url = URL.createObjectURL(blob);
@@ -210,7 +204,7 @@ export function AdminPage() {
         link.href = url; link.download = "sso-config.json";
         document.body.appendChild(link); link.click(); link.remove();
       } finally { window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setSsoBusy(false); }
   }
 
@@ -218,7 +212,6 @@ export function AdminPage() {
     e.preventDefault();
     if (!sso || ssoBusy) return;
     setSsoBusy(true);
-    setError(null);
     try {
       const { hasClientSecret: _ignored, ...fields } = sso;
       const saved = await saveSsoConfig({
@@ -230,7 +223,7 @@ export function AdminPage() {
       setClearSecret(false);
       showToast("SSO settings saved.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     } finally { setSsoBusy(false); }
   }
 
@@ -321,8 +314,6 @@ export function AdminPage() {
         {/* Main content area */}
         <main className="pxr-admin-main pxr-settings-scroll" style={{ flex: 1, overflow: "auto" }}>
           <div className="pxr-admin-content">
-            {error && <p style={{ color: "crimson", fontSize: 13, margin: "0 0 16px" }}>{error}</p>}
-
             {activeSection === "providers" && <ProviderSettings />}
 
             {activeSection === "users" && (
@@ -666,10 +657,9 @@ export function AdminPage() {
             <li>{deletePreview.personalLenses} personal lenses and {deletePreview.personalProviders} providers</li>
             <li>{deletePreview.privateLensAnnotations} private Lens results deleted; {deletePreview.sharedLensAnnotations} shared results kept anonymously</li>
           </ul>
-          <label style={{ display: "grid", gap: 6, fontSize: 12, margin: "16px 0" }}>Type the user’s email to confirm
+          <label style={{ display: "grid", gap: 6, fontSize: 12, margin: "16px 0" }}>Type the user's email to confirm
             <input autoFocus value={deleteConfirmation} onChange={event => setDeleteConfirmation(event.target.value)} className="pxr-input" />
           </label>
-          {error && <p role="alert" style={{ color: "#B42318", fontSize: 12 }}>{error}</p>}
           <div style={{ display: "flex", justifyContent: "end", gap: 8 }}><button type="button" className="pxr-btn" disabled={deleting} onClick={() => setDeletePreview(null)}>Cancel</button><button type="button" className="pxr-btn pxr-btn-primary" style={{ background: "#a32622" }} disabled={deleting || deleteConfirmation.trim().toLowerCase() !== deletePreview.user.email.toLowerCase()} onClick={() => void confirmDelete()}>{deleting ? "Deleting…" : "Delete user permanently"}</button></div>
         </section>
       </div>}

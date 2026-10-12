@@ -22,6 +22,11 @@ import { initSocket } from "./realtime/socket.js";
 import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/repositories.js";
 import { seedPresetLenses } from "./db/lens-repository.js";
 import { PRESET_LENSES } from "./lenses/presets.js";
+import { pool } from "./db/pool.js";
+import { LENS_RUN_STATE_SCHEMA } from "./db/lens-run-state.js";
+import { startLensRunWorker } from "./lenses/background-runs.js";
+import { AI_REPLIES_SCHEMA, startAiReplyWorker } from "./lenses/ai-replies.js";
+import { aiRepliesRouter } from "./routes/ai-replies.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,6 +42,7 @@ app.use("/api", documentsRouter);
 app.use("/api", documentTitlesRouter);
 app.use("/api", collectionsRouter);
 app.use("/api", humanAnnotationsRouter);
+app.use("/api", aiRepliesRouter);
 app.use("/api", authRouter);
 app.use("/api", adminRouter);
 app.use("/api", lensesRouter);
@@ -66,6 +72,10 @@ initSocket(httpServer);
 await seedSsoClientIdIfBlank(config.sso.mirpassClientId);
 await seedSsoClientSecretIfBlank(config.sso.mirpassClientSecret);
 await seedPresetLenses(PRESET_LENSES);
+await pool.query(LENS_RUN_STATE_SCHEMA);
+await pool.query(AI_REPLIES_SCHEMA);
+startLensRunWorker();
+startAiReplyWorker();
 
 httpServer.listen(config.port, () => {
   console.log(`paper-xray server listening on :${config.port}`);

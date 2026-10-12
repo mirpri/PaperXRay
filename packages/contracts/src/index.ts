@@ -11,3 +11,4 @@ export * from "./notification.js";
 
 export * from "./library.js";
 export * from "./collection.js";
+export * from "./lens-run.js";

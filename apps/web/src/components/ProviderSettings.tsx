@@ -3,14 +3,15 @@ import type { ModelProvider, ProviderDraft } from "@paper-xray/contracts";
 import { deleteProvider, fetchProviders, saveProvider } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { loadProviderKey, saveProviderKey } from "../personal/provider-keys";
+import { useToast } from "../ToastContext";
 
 export function ProviderSettings() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [providers, setProviders] = useState<ModelProvider[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [newOrg, setNewOrg] = useState(false);
-  const [error, setError] = useState("");
-  useEffect(() => { fetchProviders().then(setProviders).catch((err) => setError(String(err))); }, []);
+  useEffect(() => { fetchProviders().then(setProviders).catch((err) => showToast(String(err), "error")); }, []);
   if (!user) return null;
   const current = providers?.find((p) => p.id === selected) ?? null;
   const org = current ? current.ownerId === null : newOrg;
@@ -24,7 +25,6 @@ export function ProviderSettings() {
       Set up providers here, then select a provider and model on the Lenses page. Organization keys stay on the server;
       personal keys stay in this browser, scoped to your account. Personal endpoints must allow this site's origin (CORS).
     </p>
-    {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
     {providers === null ? <p>Loading providers…</p> : <>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
         <select className="pxr-input" style={{ flex: "1 1 240px" }} aria-label="Provider" value={selected ?? ""} onChange={(e) => setSelected(e.target.value || null)}>
@@ -44,37 +44,34 @@ function ProviderEditor({ provider, org, readOnly, userId, onSaved, onDeleted }:
   provider: ModelProvider | null; org: boolean; readOnly: boolean; userId: string;
   onSaved: (value: ModelProvider) => void; onDeleted: (id: string) => void;
 }) {
+  const { showToast } = useToast();
   const [name, setName] = useState(provider?.name ?? "");
   const [baseUrl, setBaseUrl] = useState(provider?.baseUrl ?? "");
   const [models, setModels] = useState(provider?.models.join("\n") ?? "");
   const [apiKey, setApiKey] = useState("");
   const [clearKey, setClearKey] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const hasKey = org ? provider?.hasApiKey : provider && Boolean(loadProviderKey(userId, provider.id));
   async function save(event: React.FormEvent) {
-    event.preventDefault(); setSaving(true); setError(""); setNotice("");
+    event.preventDefault(); setSaving(true);
     try {
       const draft: ProviderDraft = { name, baseUrl, models: [...new Set(models.split(/[,\n]/).map((m) => m.trim()).filter(Boolean))] };
       if (org) draft.apiKey = clearKey ? null : apiKey.trim() || undefined;
       const result = await saveProvider(provider?.id ?? null, draft, org);
       if (!org && (clearKey || apiKey)) saveProviderKey(userId, result.id, clearKey ? "" : apiKey.trim());
-      setApiKey(""); setClearKey(false); setNotice("Provider saved."); onSaved(result);
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+      setApiKey(""); setClearKey(false); showToast("Provider saved."); onSaved(result);
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setSaving(false); }
   }
   async function remove() {
     if (!provider || !window.confirm(`Delete provider "${provider.name}"?`)) return;
-    setSaving(true); setError("");
+    setSaving(true);
     try { await deleteProvider(provider.id); if (!org) saveProviderKey(userId, provider.id, ""); onDeleted(provider.id); }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
     finally { setSaving(false); }
   }
   return <form onSubmit={save}>
     <p className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>{org ? "ORGANIZATION PROVIDER" : "MY PROVIDER · KEY IN THIS BROWSER"}{readOnly && " · ADMIN-MANAGED"}</p>
-    {error && <p role="alert" style={{ color: "crimson" }}>{error}</p>}
-    {notice && <p role="status" style={{ color: "var(--human)" }}>{notice}</p>}
     <fieldset disabled={saving || readOnly} style={{ margin: 0, padding: 0, border: 0, display: "grid", gap: 12 }}>
       <div><label className="pxr-label" htmlFor="provider-name">PROVIDER NAME</label>
         <input id="provider-name" className="pxr-input" required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></div>

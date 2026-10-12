@@ -1,4 +1,5 @@
 import type { ResultSetHeader, RowDataPacket } from "mysql2";
+import type { PoolConnection } from "mysql2/promise";
 import { v4 as uuid } from "uuid";
 import type {
   AgentAnnotation,
@@ -99,6 +100,12 @@ export async function findDocumentById(id: string): Promise<Document | null> {
   return rows[0] ? toDocument(rows[0]) : null;
 }
 
+/** Status polling and enqueue checks must not reload the document's full text. */
+export async function documentExists(id: string): Promise<boolean> {
+  const [rows] = await pool.query<RowDataPacket[]>("SELECT id FROM documents WHERE id = ? LIMIT 1", [id]);
+  return rows.length > 0;
+}
+
 export async function deleteDocument(id: string): Promise<{ contentHash: string } | null> {
   const doc = await findDocumentById(id);
   if (!doc) return null;
@@ -161,8 +168,9 @@ export async function recordLensRun(
   lensId: string,
   producedCount: number,
   ownerId: string | null = null,
+  transaction?: PoolConnection,
 ): Promise<void> {
-  await pool.query(
+  await (transaction ?? pool).query(
     `INSERT INTO lens_runs (doc_id, lens_id, owner_id, produced_count)
      VALUES (?, ?, ?, ?)
      ON DUPLICATE KEY UPDATE produced_count = VALUES(produced_count), ran_at = CURRENT_TIMESTAMP(3)`,
@@ -287,12 +295,13 @@ function toAgentAnnotation(row: AgentAnnotationRow): AgentAnnotation {
 
 export async function insertAgentAnnotations(
   annotations: AgentAnnotation[],
+  transaction?: PoolConnection,
 ): Promise<void> {
   if (annotations.length === 0) return;
 
-  const conn = await pool.getConnection();
+  const conn = transaction ?? await pool.getConnection();
   try {
-    await conn.beginTransaction();
+    if (!transaction) await conn.beginTransaction();
     for (const a of annotations) {
       await conn.query(
         `INSERT INTO agent_annotations
@@ -318,12 +327,12 @@ export async function insertAgentAnnotations(
         ],
       );
     }
-    await conn.commit();
+    if (!transaction) await conn.commit();
   } catch (err) {
-    await conn.rollback();
+    if (!transaction) await conn.rollback();
     throw err;
   } finally {
-    conn.release();
+    if (!transaction) conn.release();
   }
 }
 
@@ -750,6 +759,10 @@ export async function updateSsoConfig(params: {
 }
 
 interface HumanAnnotationRow extends RowDataPacket {
+  ai_provider_name?: string | null;
+  ai_model?: string | null;
+  ai_status?: NonNullable<HumanAnnotation["ai"]>["status"] | null;
+  ai_error?: string | null;
   author_name: string | null;
   author_role: HumanAnnotation["authorRole"] | null;
   parent_id: string | null;
@@ -778,12 +791,17 @@ function toHumanAnnotation(row: HumanAnnotationRow): HumanAnnotation {
     visibility: row.visibility, version: row.version,
     createdAt: row.created_at.toISOString(), updatedAt: row.updated_at.toISOString(),
     deletedAt: row.deleted_at ? row.deleted_at.toISOString() : null,
+    ...(row.ai_status ? { ai: { providerName: row.ai_provider_name ?? "AI", model: row.ai_model ?? "",
+      status: row.ai_status, error: row.ai_error ?? null } } : {}),
   };
 }
 
 export async function findHumanAnnotationById(id: string): Promise<HumanAnnotation | null> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    "SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h LEFT JOIN users u ON u.id = h.author_id WHERE h.id = ? LIMIT 1", [id],
+    `SELECT h.*, u.display_name AS author_name, u.role AS author_role,
+     ar.provider_name AS ai_provider_name, ar.model AS ai_model, ar.status AS ai_status, ar.error AS ai_error
+     FROM human_annotations h LEFT JOIN users u ON u.id = h.author_id
+     LEFT JOIN ai_replies ar ON ar.reply_id = h.id WHERE h.id = ? LIMIT 1`, [id],
   );
   return rows[0] ? toHumanAnnotation(rows[0]) : null;
 }
@@ -796,8 +814,11 @@ export async function findAgentAnnotationById(id: string): Promise<AgentAnnotati
 /** Replies inherit access from the current root, including changes to agent-run sharing. */
 export async function listHumanAnnotationsForDoc(docId: string, viewerId: string): Promise<HumanAnnotation[]> {
   const [rows] = await pool.query<HumanAnnotationRow[]>(
-    `SELECT h.*, u.display_name AS author_name, u.role AS author_role FROM human_annotations h
+    `SELECT h.*, u.display_name AS author_name, u.role AS author_role,
+     ar.provider_name AS ai_provider_name, ar.model AS ai_model, ar.status AS ai_status, ar.error AS ai_error
+     FROM human_annotations h
      LEFT JOIN users u ON u.id = h.author_id
+     LEFT JOIN ai_replies ar ON ar.reply_id = h.id
      LEFT JOIN human_annotations r ON h.thread_root_kind = 'human' AND r.id = h.thread_root_id AND r.doc_id = h.doc_id
      LEFT JOIN agent_annotations a ON h.thread_root_kind = 'agent' AND a.id = h.thread_root_id AND a.doc_id = h.doc_id
      WHERE h.doc_id = ? AND (

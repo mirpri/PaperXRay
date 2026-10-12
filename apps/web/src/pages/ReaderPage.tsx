@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { PdfHighlighter, PdfLoader, type PdfHighlighterUtils } from "react-pdf-highlighter-extended";
 import workerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
-import type { Annotation, CharMap, Document, DocumentSummary, LensSpec, Node as IrNode, Visibility } from "@paper-xray/contracts";
+import type { Annotation, CharMap, Document, DocumentSummary, LensRunActivity, LensSpec, Node as IrNode, Visibility } from "@paper-xray/contracts";
 import { lensColor } from "@paper-xray/contracts";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import {
@@ -11,7 +11,7 @@ import {
   fetchAnnotations,
   fetchCharMap,
   fetchDocument,
-  fetchLensRuns,
+  fetchLensRunStatus,
   fetchLenses,
   fetchNodes,
   runLens,
@@ -48,6 +48,7 @@ import { PxrHighlightContainer } from "../pdf/PxrHighlightContainer";
 import { annotationsToHighlights, type PxrHighlight } from "../pdf/annotations-to-highlights";
 import { findContainingNode, findTextRange, estimateCharOffsetFromPosition } from "../anchoring/find-text-range";
 import type { SelectionPosition } from "../components/NoteComposer";
+import { useToast } from "../ToastContext";
 
 const MIN_ASIDE_WIDTH = 260;
 const MAX_ASIDE_WIDTH = 640;
@@ -62,6 +63,7 @@ export function ReaderPage() {
   const [searchParams] = useSearchParams();
   const messageCommentId = searchParams.get("comment");
   const openedMessageRef = useRef<string | null>(null);
+  const { showToast } = useToast();
 
   // Named `doc` (not `document`) deliberately — this component also needs
   // the real global `document` (DOM) for jump-to-text scrolling, and a
@@ -74,12 +76,14 @@ export function ReaderPage() {
   const [lenses, setLenses] = useState<LensSpec[] | null>(null);
   const [ranLensIds, setRanLensIds] = useState<Set<string>>(new Set());
   const [display, setDisplay] = useState<DisplaySettings>(loadDisplaySettings);
-  const [notice, setNotice] = useState<string | null>(null);
   // Sidebar-card emphasis when a PDF mark is clicked (pxr/annotations-to-highlights
   // PDF-side glow instead uses the library's own isScrolledTo — see PxrHighlightContainer).
   const [activeAnnotationId, setActiveAnnotationId] = useState<string | null>(null);
   const { trackLensRun, isLensRunning } = useLensRunActivity(docId);
-  const [error, setError] = useState<string | null>(null);
+  const [serverRuns, setServerRuns] = useState<{ docId: string; activity: LensRunActivity[] } | null>(null);
+  const previousServerRunsRef = useRef<{ docId: string; activity: LensRunActivity[] } | null>(null);
+  const lensStatusRequestRef = useRef(0);
+  const lensStatusErrorRef = useRef(false);
   const [scale, setScale] = useState(1.5);
   const [asideWidth, setAsideWidth] = useState(378);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
@@ -91,27 +95,74 @@ export function ReaderPage() {
   usePdfZoom(pdfContainerRef, pdfHighlighterUtilsRef, setScale);
 
   const reloadAnnotations = useCallback(() => {
-    fetchAnnotations(docId).then(setAnnotations).catch((err) => setError(String(err)));
-  }, [docId]);
+    fetchAnnotations(docId).then(result => {
+      if (activeDocIdRef.current === docId) setAnnotations(result);
+    }).catch((err) => {
+      if (activeDocIdRef.current === docId) showToast(String(err), "error");
+    });
+  }, [docId, showToast]);
+
+  // Realtime updates are immediate; polling recovers a missed completion or a refresh.
+  const hasPendingAiReplies = annotations.some(item => "authorId" in item && !item.deletedAt &&
+    (item.ai?.status === "queued" || item.ai?.status === "running"));
+  useEffect(() => {
+    if (!hasPendingAiReplies) return;
+    const timer = setInterval(reloadAnnotations, 2500);
+    return () => clearInterval(timer);
+  }, [hasPendingAiReplies, reloadAnnotations]);
 
   const reloadLensRuns = useCallback(() => {
-    fetchLensRuns(docId)
-      .then((runs) => {
-        if (activeDocIdRef.current !== docId) return;
+    const request = ++lensStatusRequestRef.current;
+    return fetchLensRunStatus(docId)
+      .then(({ lensRuns: runs, activity }) => {
+        if (activeDocIdRef.current !== docId || request !== lensStatusRequestRef.current) return;
+        lensStatusErrorRef.current = false;
+        const previous = previousServerRunsRef.current;
+        const oldActivity = previous?.docId === docId ? previous.activity : null;
+        for (const run of activity) {
+          const old = oldActivity?.find(item => item.lensId === run.lensId);
+          if (old && old.updatedAt !== run.updatedAt && (run.status === "succeeded" || run.status === "failed")) {
+            if (run.status === "failed") showToast(run.error ?? "Lens run failed", "error");
+            else {
+              showToast(`${run.producedCount ?? 0} annotations created.`);
+              setDisplay(current => ({ ...current, hiddenGroups: current.hiddenGroups.filter(id => id !== run.lensId) }));
+            }
+          }
+        }
+        // Also catches completion while the page was closed or the socket disconnected.
+        if (!oldActivity || activity.some(run => run.status === "succeeded" &&
+            oldActivity.find(old => old.lensId === run.lensId)?.updatedAt !== run.updatedAt)) reloadAnnotations();
+        previousServerRunsRef.current = { docId, activity };
+        setServerRuns({ docId, activity });
         // A response started before a run completed must not erase that completion.
         setRanLensIds(current => new Set([...current, ...runs.map(r => r.lensId)]));
       })
-      .catch((err) => setError(String(err)));
-  }, [docId]);
+      .catch((err) => {
+        if (activeDocIdRef.current === docId && request === lensStatusRequestRef.current && !lensStatusErrorRef.current) {
+          lensStatusErrorRef.current = true;
+          showToast(String(err), "error");
+        }
+      });
+  }, [docId, reloadAnnotations, showToast]);
+
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function poll() {
+      await reloadLensRuns();
+      if (!stopped) timer = setTimeout(poll, 2500);
+    }
+    void poll();
+    return () => { stopped = true; clearTimeout(timer); lensStatusRequestRef.current++; };
+  }, [reloadLensRuns]);
 
   useEffect(() => {
     setRanLensIds(new Set());
-    fetchDocument(docId).then(setDoc).catch((err) => setError(String(err)));
-    fetchNodes(docId).then(setNodes).catch((err) => setError(String(err)));
-    fetchCharMap(docId).then(setCharMap).catch((err) => setError(String(err)));
-    fetchLenses().then(setLenses).catch((err) => setError(String(err)));
+    fetchDocument(docId).then(setDoc).catch((err) => showToast(String(err), "error"));
+    fetchNodes(docId).then(setNodes).catch((err) => showToast(String(err), "error"));
+    fetchCharMap(docId).then(setCharMap).catch((err) => showToast(String(err), "error"));
+    fetchLenses().then(setLenses).catch((err) => showToast(String(err), "error"));
     reloadAnnotations();
-    reloadLensRuns();
   }, [docId, reloadAnnotations, reloadLensRuns]);
 
   // Another user's lens run also changes which chips are "ready".
@@ -122,7 +173,7 @@ export function ReaderPage() {
   const onDocumentChanged = useCallback((updated: DocumentSummary) => {
     setDoc(current => current?.id === updated.id ? { ...current, title: updated.title } : current);
   }, []);
-  useDocumentSocket(docId, onRemoteChange, onDocumentChanged);
+  useDocumentSocket(docId, onRemoteChange, onDocumentChanged, reloadLensRuns);
 
   function toggleGroup(key: string) {
     const hidden = display.hiddenGroups.includes(key)
@@ -266,7 +317,7 @@ export function ReaderPage() {
   function jumpToHighlight(annotationId: string) {
     const highlight = highlights.find((h) => h.annotationId === annotationId);
     if (!highlight) {
-      setError("That annotation has no visible highlight yet (still loading the PDF, or it has no locatable evidence span).");
+      showToast("That annotation has no visible highlight yet (still loading the PDF, or it has no locatable evidence span).", "error");
       return;
     }
     pdfHighlighterUtilsRef.current?.scrollToHighlight(highlight);
@@ -293,9 +344,20 @@ export function ReaderPage() {
    */
   async function triggerLensRun(lens: LensSpec) {
     await trackLensRun(lens.id, async () => {
-      setError(null);
-      setNotice(null);
       try {
+        if (lens.executionContext === "org-server") {
+          const { status } = await runLens(docId, lens.id);
+          if (activeDocIdRef.current !== docId) return;
+          // Preserve busy state immediately, even if the first status query fails.
+          const optimistic: LensRunActivity = { lensId: lens.id, status, stage: status === "queued" ? "queued" : "model",
+            producedCount: null, submittedCount: null, error: null, updatedAt: new Date().toISOString() };
+          const previous = previousServerRunsRef.current;
+          const activity = [...(previous?.docId === docId ? previous.activity : []).filter(run => run.lensId !== lens.id), optimistic];
+          previousServerRunsRef.current = { docId, activity };
+          setServerRuns({ docId, activity });
+          await reloadLensRuns();
+          return;
+        }
         let settings: PersonalModelSettings | null = null;
         if (lens.executionContext === "personal-client") {
           if (lens.providerId) {
@@ -306,16 +368,15 @@ export function ReaderPage() {
           if (!settings) throw new Error("Choose a provider and model on the Lenses page before running this lens.");
           if (!doc) return;
         }
-        const result = settings
-          ? await submitClientLensRun(
+        if (!settings || !doc) return;
+        const result = await submitClientLensRun(
               docId,
               lens.id,
               await runPersonalLens({ spec: lens, normalizedText: doc!.normalizedText, settings }),
-            )
-          : await runLens(docId, lens.id);
+            );
         if (activeDocIdRef.current !== docId) return;
         const dropped = result.submittedCount - result.producedCount;
-        setNotice(
+        showToast(
           `${lens.name}: ${result.producedCount} annotation${result.producedCount === 1 ? "" : "s"}` +
             (dropped > 0 ? `, ${dropped} dropped by evidence verification.` : "."),
         );
@@ -325,7 +386,7 @@ export function ReaderPage() {
         reloadAnnotations();
         reloadLensRuns();
       } catch (err) {
-        if (activeDocIdRef.current === docId) setError(err instanceof Error ? err.message : String(err));
+        if (activeDocIdRef.current === docId) showToast(err instanceof Error ? err.message : String(err), "error");
       }
     });
   }
@@ -335,14 +396,14 @@ export function ReaderPage() {
       await setRunVisibility(docId, runId, visibility);
       reloadAnnotations();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     }
   }
 
   async function submitNote(selectedText: string, noteText: string, position?: SelectionPosition) {
     if (!doc || !nodes || !charMap) return;
     if (!position || !geometries) {
-      setError("PDF text positions are still loading — please try again shortly.");
+      showToast("PDF text positions are still loading — please try again shortly.", "error");
       return;
     }
 
@@ -355,7 +416,7 @@ export function ReaderPage() {
     );
     const pageRuns = charMap.filter((run) => run.page === position.page);
     if (charOffset === null || pageRuns.length === 0) {
-      setError("Could not locate the selected text on this PDF page.");
+      showToast("Could not locate the selected text on this PDF page.", "error");
       return;
     }
     const positionHint = { page: position.page, charOffset, pageRange: {
@@ -365,12 +426,12 @@ export function ReaderPage() {
 
     const range = findTextRange(doc.normalizedText, selectedText, positionHint);
     if (!range) {
-      setError("Could not locate the selected text in the reassembled document — try selecting within a single paragraph.");
+      showToast("Could not locate the selected text in the reassembled document — try selecting within a single paragraph.", "error");
       return;
     }
     const node = findContainingNode(nodes, range.start);
     if (!node) {
-      setError("That selection falls outside any recognized paragraph.");
+      showToast("That selection falls outside any recognized paragraph.", "error");
       return;
     }
     try {
@@ -381,7 +442,7 @@ export function ReaderPage() {
       });
       reloadAnnotations();
     } catch (err) {
-      setError(String(err));
+      showToast(String(err), "error");
     }
   }
 
@@ -409,12 +470,6 @@ export function ReaderPage() {
           </div>
         }
       />
-
-      {error && (
-        <p style={{ color: "crimson", fontSize: 13, padding: "8px 18px", margin: 0, background: "#FFF3F3" }}>
-          {error}
-        </p>
-      )}
 
       <div style={{ flexGrow: 1, display: "flex", minHeight: 0 }}>
         <div style={{ flexGrow: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -532,6 +587,8 @@ export function ReaderPage() {
             {lenses?.map((lens) => {
               const ready = ranLensIds.has(lens.id);
               const personal = lens.ownerId !== null;
+              const activity = serverRuns?.docId === docId ? serverRuns.activity.find(run => run.lensId === lens.id) : undefined;
+              const serverBusy = activity?.status === "queued" || activity?.status === "running";
               return (
                 <FilterChip
                   key={lens.id}
@@ -541,9 +598,11 @@ export function ReaderPage() {
                   count={countsByGroup.get(lens.id) ?? 0}
                   ready={ready}
                   active={!display.hiddenGroups.includes(lens.id)}
-                  loading={isLensRunning(lens.id)}
+                  loading={isLensRunning(lens.id) || serverBusy || (lens.executionContext === "org-server" && serverRuns?.docId !== docId)}
+                  loadingLabel={activity?.stage === "queued" ? "queued" : activity?.stage === "verifying" ? "verifying" : activity?.stage === "model" ? "calling model" : undefined}
+                  error={activity?.status === "failed" ? activity.error ?? "Lens run failed" : undefined}
                   onClick={() => (ready ? toggleGroup(lens.id) : triggerLensRun(lens))}
-                  onRerun={ready ? () => triggerLensRun(lens) : undefined}
+                  onRerun={ready && (lens.ownerId !== null || user?.role === "admin" || user?.role === "curator") ? () => triggerLensRun(lens) : undefined}
                 />
               );
             })}
@@ -598,43 +657,6 @@ export function ReaderPage() {
         </aside>
         )}
       </div>
-
-      {notice && !error && (
-        <div
-          style={{
-            position: "fixed",
-            bottom: 20,
-            left: 20,
-            background: "var(--panel)",
-            border: "1px solid var(--border-strong)",
-            borderRadius: 4,
-            padding: "12px 16px",
-            boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            maxWidth: 400,
-            zIndex: 1000,
-          }}
-        >
-          <span style={{ fontSize: 13, color: "var(--text)", flex: 1 }}>{notice}</span>
-          <button
-            onClick={() => setNotice(null)}
-            style={{
-                background: "transparent",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
-                color: "var(--text-muted)",
-                fontSize: 18,
-                lineHeight: 1,
-            }}
-            aria-label="Close"
-          >
-            ×
-          </button>
-        </div>
-      )}
     </div>
   );
 }

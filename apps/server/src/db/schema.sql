@@ -233,6 +233,42 @@ CREATE TABLE lenses (
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
 
 
+-- Current asynchronous run state, keyed by document/lens rather than a public task ID.
+CREATE TABLE lens_run_state (
+  doc_id CHAR(36) NOT NULL,
+  lens_id VARCHAR(64) NOT NULL,
+  owner_id CHAR(36) NULL,
+  status VARCHAR(16) NOT NULL,
+  stage VARCHAR(16) NOT NULL,
+  claim_token CHAR(36) NULL,
+  lease_until DATETIME(3) NULL,
+  produced_count INT NULL,
+  submitted_count INT NULL,
+  error VARCHAR(1000) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (doc_id, lens_id),
+  KEY idx_lens_run_state_queue (status, updated_at),
+  CONSTRAINT fk_lens_run_state_doc FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_lens_run_state_lens FOREIGN KEY (lens_id) REFERENCES lenses(id) ON DELETE CASCADE,
+  CONSTRAINT fk_lens_run_state_owner FOREIGN KEY (owner_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE ai_replies (
+  reply_id CHAR(36) NOT NULL PRIMARY KEY,
+  provider_id VARCHAR(64) NOT NULL,
+  provider_name VARCHAR(120) NOT NULL,
+  model VARCHAR(255) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  active_key VARCHAR(160) NULL,
+  claim_token CHAR(36) NULL,
+  lease_until DATETIME(3) NULL,
+  error VARCHAR(1000) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  UNIQUE KEY uq_ai_replies_active (active_key),
+  KEY idx_ai_replies_queue (status, updated_at),
+  CONSTRAINT fk_ai_replies_reply FOREIGN KEY (reply_id) REFERENCES human_annotations(id) ON DELETE CASCADE
+) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE notifications (
   id CHAR(36) NOT NULL PRIMARY KEY,
   recipient_id CHAR(36) NOT NULL,

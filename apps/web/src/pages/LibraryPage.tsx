@@ -8,6 +8,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Search, X, ArrowUp, ArrowDown } from "lucide-react";
 import { LibraryPagination } from "../components/LibraryPagination";
 import { libraryQueryParams, readLibraryQuery } from "./library-query";
+import { useToast } from "../ToastContext";
 
 type SortField = "date" | "title" | "pages";
 type SortDirection = "asc" | "desc";
@@ -41,6 +42,7 @@ function fieldDirectionToSort(field: SortField, direction: SortDirection): Docum
 export function LibraryPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { showToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
   const { search, sort, page, pageSize } = readLibraryQuery(searchParams);
   const [searchDraft, setSearchDraft] = useState(search);
@@ -49,12 +51,10 @@ export function LibraryPage() {
   const resultsSection = useRef<HTMLElement>(null);
   const [result, setResult] = useState<DocumentPage | null>(null);
   const [listLoading, setListLoading] = useState(true);
-  const [listError, setListError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
-  const [status, setStatus] = useState<"idle" | "uploading" | "importing" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "uploading" | "importing">("idle");
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({ phase: "uploading", percent: 0 });
   const [importUrl, setImportUrl] = useState("");
-  const [error, setError] = useState<string | null>(null);
 
   const changeQuery = useCallback((changes: Partial<DocumentListQuery>, replace = false) => {
     setSearchParams(current => libraryQueryParams({ ...readLibraryQuery(current), ...changes }), { replace });
@@ -70,14 +70,14 @@ export function LibraryPage() {
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setListLoading(true); setListError(null); setResult(null);
+    setListLoading(true); setResult(null);
     fetchDocuments({ search, sort, page, pageSize }, controller.signal)
       .then(data => {
         if (!active) return;
         if (data.page !== page) { changeQuery({ page: data.page }, true); return; }
         setResult(data);
       })
-      .catch(err => { if (active) setListError(err instanceof Error ? err.message : String(err)); })
+      .catch(err => { if (active) showToast(err instanceof Error ? err.message : String(err), "error"); })
       .finally(() => { if (active) setListLoading(false); });
     return () => { active = false; controller.abort(); };
   }, [search, sort, page, pageSize, refresh, changeQuery]);
@@ -89,13 +89,13 @@ export function LibraryPage() {
 
     setStatus("uploading");
     setUploadProgress({ phase: "uploading", percent: 0 });
-    setError(null);
     try {
       const doc = await uploadDocument(file, setUploadProgress);
       navigate(`/documents/${doc.id}`);
     } catch (err) {
-      setStatus("error");
-      setError(String(err));
+      showToast(String(err), "error");
+    } finally {
+      setStatus("idle");
     }
   }
 
@@ -103,13 +103,13 @@ export function LibraryPage() {
     e.preventDefault();
     if (!importUrl.trim() || busy) return;
     setStatus("importing");
-    setError(null);
     try {
       const doc = await importDocumentFromUrl(importUrl.trim());
       navigate(`/documents/${doc.id}`);
     } catch (err) {
-      setStatus("error");
-      setError(String(err));
+      showToast(String(err), "error");
+    } finally {
+      setStatus("idle");
     }
   }
 
@@ -212,14 +212,12 @@ export function LibraryPage() {
                 ? "Downloading and processing the paper. This may take a moment."
                 : uploadProgress.phase === "processing"
                   ? "Upload complete. Preparing your paper…"
-                  : "Sending your PDF…"}
-            </p>
-          </div>
-        )}
+                                    : "Sending your PDF…"}
+                              </p>
+                            </div>
+                          )}
 
-        {status === "error" && <p style={{ color: "crimson", fontSize: 13 }}>{error}</p>}
-
-        <div className="pxr-library-controls">
+                          <div className="pxr-library-controls">
           <div className="pxr-library-search">
             <Search size={15} aria-hidden="true" />
             <input ref={searchInput} type="search" aria-label="Search papers by title" placeholder="Search by title…" maxLength={200}
@@ -274,10 +272,7 @@ export function LibraryPage() {
 
         <section ref={resultsSection} className="pxr-library-results" aria-label="Papers" aria-busy={listLoading}>
           {listLoading && <p className="pxr-library-empty" role="status">Loading papers…</p>}
-          {listError && <div className="pxr-library-load-error" role="alert">
-            <span>{listError}</span><button type="button" className="pxr-btn" onClick={() => setRefresh(value => value + 1)}>Retry</button>
-          </div>}
-          {!listLoading && !listError && result && <>
+          {!listLoading && result && <>
             {result.documents.length === 0 ? <p className="pxr-library-empty">
               {search ? "No papers match your search." : "No papers yet — upload a PDF to get started."}
             </p> : <ul className="pxr-library-list">

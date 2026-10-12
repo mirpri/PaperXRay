@@ -8,7 +8,7 @@ import multer from "multer";
 import { config } from "../config.js";
 import { extractPdf } from "../extraction/extract-pages.js";
 import { buildDocument } from "../reassembly/build-document.js";
-import { runOrgLens } from "../lenses/run-org-lens.js";
+import { enqueueLensRun, listLensRunActivity } from "../db/lens-run-state.js";
 import { lensItemsToCandidates } from "../lenses/run-model-lens.js";
 import { findLensById } from "../db/lens-repository.js";
 import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
@@ -19,6 +19,7 @@ import {
   createDocumentWithNodes,
   findDocumentByContentHash,
   findDocumentById,
+  documentExists,
   deleteDocument,
   getCharMapForDocument,
   insertAgentAnnotations,
@@ -33,7 +34,7 @@ import {
 } from "../db/repositories.js";
 import { parseDocumentListQuery } from "./document-list-query.js";
 import { withVoteSummaries } from "../db/votes.js";
-import { broadcastAnnotationsChanged } from "../realtime/socket.js";
+import { broadcastAnnotationsChanged, broadcastLensRunsChanged } from "../realtime/socket.js";
 
 export const documentsRouter: RouterType = Router();
 
@@ -173,6 +174,8 @@ documentsRouter.get("/documents/:id/file", requireAuth, async (req, res, next) =
     }
     const bytes = await readFile(pdfPathForHash(document.contentHash));
     res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    res.setHeader("ETag", `"${document.contentHash}"`);
     res.send(bytes);
   } catch (err) {
     next(err);
@@ -208,12 +211,16 @@ documentsRouter.get("/documents/:id/nodes", requireAuth, async (req, res, next) 
 
 documentsRouter.get("/documents/:id/lens-runs", requireAuth, async (req, res, next) => {
   try {
-    const document = await findDocumentById(req.params.id);
-    if (!document) {
+    if (!await documentExists(req.params.id)) {
       res.status(404).json({ error: "Document not found" });
       return;
     }
-    res.json({ lensRuns: await listLensRunsForDocument(req.params.id, req.user!.id) });
+    const [lensRuns, activity] = await Promise.all([
+      listLensRunsForDocument(req.params.id, req.user!.id),
+      listLensRunActivity(req.params.id, req.user!.id),
+    ]);
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ lensRuns, activity });
   } catch (err) {
     next(err);
   }
@@ -249,11 +256,10 @@ async function persistLensRun(params: {
   return verified.length;
 }
 
-/** Runs an org lens server-side against the org model endpoint. */
+/** Enqueues an org lens; only state is returned, never a public task ID. */
 documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (req, res, next) => {
   try {
-    const document = await findDocumentById(req.params.id);
-    if (!document) {
+    if (!await documentExists(req.params.id)) {
       res.status(404).json({ error: "Document not found" });
       return;
     }
@@ -262,19 +268,9 @@ documentsRouter.post("/documents/:id/lenses/:lensId/run", requireAuth, async (re
       res.status(404).json({ error: "Org lens not found" });
       return;
     }
-    const nodes = await listNodesForDocument(document.id);
-
-    let candidates: AgentAnnotation[];
-    try {
-      candidates = await runOrgLens({ spec, docId: document.id, normalizedText: document.normalizedText, nodes });
-    } catch (err) {
-      console.error(`Lens run failed (doc ${document.id}, lens ${spec.id}):`, err);
-      res.status(502).json({ error: err instanceof Error ? err.message : "Lens run failed" });
-      return;
-    }
-
-    const producedCount = await persistLensRun({ document, spec, nodes, candidates, ownerId: spec.ownerId });
-    res.status(202).json({ producedCount, submittedCount: candidates.length });
+    const status = await enqueueLensRun(req.params.id, spec);
+    broadcastLensRunsChanged(req.params.id);
+    res.status(202).json({ status });
   } catch (err) {
     next(err);
   }

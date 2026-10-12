@@ -31,6 +31,8 @@ export interface AnnotationVotes {
 }
 
 export interface HumanAnnotation {
+  /** AI answers participate in the same reply tree, with explicit provenance. */
+  ai?: { providerName: string; model: string; status: "queued" | "running" | "succeeded" | "failed"; error: string | null };
   votes?: AnnotationVotes;
   id: string;
   docId: string;
@@ -89,6 +91,13 @@ export interface AgentAnnotation {
 }
 
 export type Annotation = HumanAnnotation | AgentAnnotation;
+
+export interface AiReplyStarted {
+  annotation: HumanAnnotation;
+  executionContext: "org-server" | "personal-client";
+  reused: boolean;
+  messages?: { role: "system" | "user" | "assistant"; content: string }[];
+}
 
 export function isAgentAnnotation(a: Annotation): a is AgentAnnotation {
   return "agentId" in a;

@@ -15,9 +15,10 @@ export interface ChatMessage {
  * org-configured model endpoint). No SDK dependency — one endpoint, one
  * shape, not worth the extra package.
  */
-export async function callChatModel(messages: ChatMessage[], endpoint: ChatModelConfig): Promise<string> {
+export async function callChatModel(messages: ChatMessage[], endpoint: ChatModelConfig, signal?: AbortSignal): Promise<string> {
   const res = await fetch(`${endpoint.baseUrl.replace(/\/+$/, "")}/chat/completions`, {
     method: "POST",
+    signal,
     headers: {
       "Content-Type": "application/json",
       ...(endpoint.apiKey ? { Authorization: `Bearer ${endpoint.apiKey}` } : {}),

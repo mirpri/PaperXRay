@@ -16,7 +16,6 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
   const [draft, setDraft] = useState("");
   const [initial, setInitial] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const pending = useRef(false);
   const editButton = useRef<HTMLButtonElement>(null);
@@ -25,7 +24,7 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
 
   function close() {
     if (pending.current) return;
-    setEditing(false); setError(null);
+    setEditing(false);
     requestAnimationFrame(() => editButton.current?.focus());
   }
 
@@ -33,13 +32,13 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
     event.preventDefault();
     if (pending.current || !draft.trim()) return;
     if (draft.trim() === initial) { close(); return; }
-    pending.current = true; setBusy(true); setError(null);
+    pending.current = true; setBusy(true);
     try {
       onChanged(await updateDocumentTitle(doc.id, draft.trim()));
       pending.current = false;
       close();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       pending.current = false; setBusy(false);
     }
@@ -54,13 +53,12 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
       return;
     }
     setBusy(true);
-    setError(null);
     try {
       await deleteDocument(doc.id);
       showToast("Document deleted successfully", "success");
       onDeleted?.(doc.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
       setConfirmingDelete(false);
     } finally {
       setBusy(false);
@@ -73,7 +71,7 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
         onKeyDown={event => { if (event.key === "Escape") { event.preventDefault(); close(); } }}
         onBlur={event => {
           if (!event.currentTarget.contains(event.relatedTarget) && !pending.current && draft.trim() === initial) {
-            setEditing(false); setError(null);
+            setEditing(false);
           }
         }}>
         <input aria-label="Paper title" autoFocus maxLength={500} value={draft} disabled={busy}
@@ -83,7 +81,7 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
       </form> : <>
         <Link className="pxr-library-title" to={`/documents/${doc.id}`} title={title}>{title}</Link>
         {canEdit && <button ref={editButton} className="pxr-library-edit" type="button" title="Edit title" aria-label={`Edit title: ${title}`}
-          onClick={() => { setDraft(doc.title ?? ""); setInitial((doc.title ?? "").trim()); setError(null); setEditing(true); }}>
+          onClick={() => { setDraft(doc.title ?? ""); setInitial((doc.title ?? "").trim()); setEditing(true); }}>
           <Pencil size={13} aria-hidden="true" />
         </button>}
         {canDelete && <button className="pxr-library-edit" type="button" title={confirmingDelete ? "Click again to confirm delete" : "Delete document"} aria-label={`Delete: ${title}`}
@@ -93,6 +91,5 @@ export function DocumentListItem({ document: doc, canEdit, canDelete, onChanged,
         <span className="pxr-library-meta mono">{doc.pageCount} pages · {new Date(doc.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}</span>
       </>}
     </div>
-    {error && <p className="pxr-library-error" role="alert">{error}</p>}
   </li>;
 }

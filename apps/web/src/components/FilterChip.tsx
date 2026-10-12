@@ -7,6 +7,8 @@ interface FilterChipProps {
   /** false = this lens hasn't run on this document yet (dashed, click to run). true = a show/hide toggle. Always true for "Human". */
   ready: boolean;
   loading: boolean;
+  loadingLabel?: string;
+  error?: string;
   onClick: () => void;
   /** Marks personal lenses, which run in the browser. */
   personal?: boolean;
@@ -15,7 +17,7 @@ interface FilterChipProps {
 }
 
 /** Group toggle in the annotations sidebar. Lens chips that haven't been run yet render dashed and act as a "run this lens" button instead — see pages/ReaderPage.tsx. */
-export function FilterChip({ label, count, active, ready, loading, onClick, personal, onRerun, color }: FilterChipProps) {
+export function FilterChip({ label, count, active, ready, loading, loadingLabel, error, onClick, personal, onRerun, color }: FilterChipProps) {
   const text = personal ? `${label} (mine)` : label;
   return (
     <span style={{ display: "inline-flex" }}>
@@ -24,7 +26,7 @@ export function FilterChip({ label, count, active, ready, loading, onClick, pers
         disabled={loading}
         aria-busy={loading}
         aria-pressed={ready ? active : undefined}
-        title={ready ? (active ? `Hide ${label}` : `Show ${label}`) : `Run ${label}${personal ? " in this browser" : ""}`}
+        title={loading ? `${label}: ${loadingLabel ?? "running"}` : error ?? (ready ? (active ? `Hide ${label}` : `Show ${label}`) : `Run ${label}${personal ? " in this browser" : ""}`)}
         style={{
           fontSize: 11,
           padding: "5px 10px",
@@ -36,7 +38,7 @@ export function FilterChip({ label, count, active, ready, loading, onClick, pers
         }}
       >
         {color && <span aria-hidden="true" style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: color, marginRight: 6 }} />}
-        {loading ? `${text} …` : ready ? `${text} ${count}` : `${text} · run`}
+        {loading ? `${text}${loadingLabel ? ` · ${loadingLabel}` : ""} …` : error ? `${text} · failed` : ready ? `${text} ${count}` : `${text} · run`}
       </button>
       {onRerun && (
         <button

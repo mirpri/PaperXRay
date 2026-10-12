@@ -8,6 +8,7 @@ export async function runOrgLens(params: {
   docId: string;
   normalizedText: string;
   nodes: IrNode[];
+  signal?: AbortSignal;
 }): Promise<AgentAnnotation[]> {
   const { spec, docId, normalizedText, nodes } = params;
   if (spec.executionContext !== "org-server") {
@@ -17,5 +18,6 @@ export async function runOrgLens(params: {
   if (!modelConfig) {
     throw new Error("This organization lens has no model API configured. Ask an administrator to configure it in the admin panel.");
   }
-  return runModelLens({ spec, docId, normalizedText, nodes, modelConfig });
+  return runModelLens({ spec, docId, normalizedText, nodes, modelConfig,
+    ...(params.signal ? { signal: params.signal } : {}) });
 }

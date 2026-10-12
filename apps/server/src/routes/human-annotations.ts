@@ -1,5 +1,5 @@
 import { Router, type Router as RouterType } from "express";
-import type { Anchor, Annotation, Visibility } from "@paper-xray/contracts";
+import type { Anchor, Visibility } from "@paper-xray/contracts";
 import {
   findDocumentById,
   findAgentAnnotationById,
@@ -11,20 +11,11 @@ import {
 import { requireAuth } from "../auth/middleware.js";
 import { findNotificationRecipient } from "../db/notifications.js";
 import { broadcastAnnotationsChanged, broadcastNotificationsChanged } from "../realtime/socket.js";
+import { visibleRoot } from "../discussion/access.js";
+import { cancelAiReply } from "../lenses/ai-replies.js";
 
 export const humanAnnotationsRouter: RouterType = Router();
 
-async function visibleRoot(annotation: Annotation, viewerId: string): Promise<Annotation | null> {
-  let root: Annotation | null = annotation;
-  if ("authorId" in annotation && annotation.parentId) {
-    root = annotation.threadRootKind === "agent"
-      ? await findAgentAnnotationById(annotation.threadRootId!)
-      : await findHumanAnnotationById(annotation.threadRootId!);
-  }
-  if (!root || root.docId !== annotation.docId) return null;
-  const owner = "authorId" in root ? root.authorId : root.ownerId;
-  return root.visibility === "org" || owner === viewerId ? root : null;
-}
 function validBody(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= 10000;
 }
@@ -99,6 +90,7 @@ humanAnnotationsRouter.patch("/documents/:docId/human-annotations/:id", requireA
       res.status(404).json({ error: "Annotation not found" });
       return;
     }
+    if (existing.ai) { res.status(403).json({ error: "AI replies cannot be edited" }); return; }
     // Editing is always restricted to the comment author.
     if (existing.authorId !== req.user!.id) {
       res.status(403).json({ error: "You can only edit your own annotations" });
@@ -133,8 +125,8 @@ humanAnnotationsRouter.delete("/documents/:docId/human-annotations/:id", require
       res.status(404).json({ error: "Annotation not found" });
       return;
     }
-    if (existing.authorId !== req.user!.id && !(req.user!.role === "admin" && existing.authorRole !== "admin")) {
-      res.status(403).json({ error: "You can delete your own comments; admins may also delete comments by non-admins" });
+    if (existing.authorId !== req.user!.id && req.user!.role !== "admin") {
+      res.status(403).json({ error: "You can delete your own comments; admins may delete any comment" });
       return;
     }
 
@@ -143,6 +135,8 @@ humanAnnotationsRouter.delete("/documents/:docId/human-annotations/:id", require
       res.status(409).json({ error: "This annotation was already modified", current: result.current });
       return;
     }
+
+    if (existing.ai) await cancelAiReply(existing.id);
 
     broadcastAnnotationsChanged(req.params.docId);
     if (existing.authorId) broadcastNotificationsChanged(existing.authorId);

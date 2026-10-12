@@ -79,6 +79,7 @@ export async function runModelLens(params: {
   normalizedText: string;
   nodes: IrNode[];
   modelConfig: ChatModelConfig;
+  signal?: AbortSignal;
 }): Promise<AgentAnnotation[]> {
   const { spec, docId, normalizedText, nodes } = params;
   if (normalizedText.trim().length === 0) return [];
@@ -86,7 +87,7 @@ export async function runModelLens(params: {
   const raw = await callChatModel([
     { role: "system", content: buildLensSystemPrompt(spec) },
     { role: "user", content: buildLensUserMessage(normalizedText) },
-  ], params.modelConfig);
+  ], params.modelConfig, params.signal);
 
   const items = parseLensModelOutput(raw, spec.maxAnnotations);
   return lensItemsToCandidates({ items, spec, docId, normalizedText, nodes, ownerId: spec.ownerId });

@@ -5,6 +5,8 @@ import { LENS_SCOPES, MAX_ANNOTATIONS_LIMIT, LENS_COLORS, lensColor } from "@pap
 import { createLens, deleteLens, fetchLenses, fetchProviders, updateLens } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { Header } from "../components/Header";
+import { ProviderModelFields } from "../components/ProviderModelFields";
+import { useToast } from "../ToastContext";
 
 const SCOPE_LABELS: Record<LensScope, string> = {
   all: "Whole paper",
@@ -52,6 +54,7 @@ function draftFrom(spec: LensSpec): LensDraft {
  */
 export function LensesPage() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const editorRef = useRef<HTMLElement>(null);
   const canEditOrg = user?.role === "curator" || user?.role === "admin";
 
@@ -60,16 +63,14 @@ export function LensesPage() {
   const [draft, setDraft] = useState<LensDraft>(EMPTY_DRAFT);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
 
   const [providers, setProviders] = useState<ModelProvider[]>([]);
 
   useEffect(() => {
-    fetchProviders().then(setProviders).catch((err) => setError(String(err)));
+    fetchProviders().then(setProviders).catch((err) => showToast(String(err), "error"));
     fetchLenses()
       .then(setLenses)
-      .catch((err) => setError(String(err)));
+      .catch((err) => showToast(String(err), "error"));
   }, []);
 
   const orgLenses = lenses?.filter((l) => l.ownerId === null) ?? [];
@@ -82,8 +83,6 @@ export function LensesPage() {
     if (dirty && !window.confirm("Discard unsaved changes?")) return;
     setSelection(next);
     editorRef.current?.scrollTo({ top: 0 });
-    setError(null);
-    setNotice(null);
     setDirty(false);
     if (next?.kind === "existing") {
       const spec = lenses?.find((l) => l.id === next.id);
@@ -102,7 +101,6 @@ export function LensesPage() {
   async function save() {
     if (!selection) return;
     setSaving(true);
-    setError(null);
     try {
       const saved =
         selection.kind === "new" ? await createLens(draft, selection.org) : await updateLens(selection.id, draft);
@@ -113,9 +111,9 @@ export function LensesPage() {
       setSelection({ kind: "existing", id: saved.id });
       setDraft(draftFrom(saved));
       setDirty(false);
-      setNotice(selection.kind === "new" ? "Lens created." : `Saved as version ${saved.version}.`);
+      showToast(selection.kind === "new" ? "Lens created." : `Saved as version ${saved.version}.`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     } finally {
       setSaving(false);
     }
@@ -129,7 +127,7 @@ export function LensesPage() {
       setSelection(null);
       setDirty(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      showToast(err instanceof Error ? err.message : String(err), "error");
     }
   }
 
@@ -170,9 +168,6 @@ export function LensesPage() {
 
         <main ref={editorRef} className="pxr-lenses-main pxr-settings-scroll" aria-label="Lens configuration">
           <div className="pxr-lenses-editor">
-          {error && <p style={{ color: "crimson", fontSize: 13, marginTop: 0 }}>{error}</p>}
-          {notice && <p style={{ color: "var(--human)", fontSize: 13, marginTop: 0 }}>{notice}</p>}
-
           {selection === null ? (
             <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
               Pick a lens to view or edit it, or create a personal lens of your own.
@@ -217,24 +212,10 @@ export function LensesPage() {
                   </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(200px, 100%), 1fr))", gap: 12 }}>
-                  <div><label className="pxr-label" htmlFor="lens-provider">PROVIDER</label>
-                    <select id="lens-provider" className="pxr-input" value={draft.providerId ?? ""} onChange={(e) => {
-                      const provider = providers.find((p) => p.id === e.target.value);
-                      setDraft((d) => ({ ...d, providerId: provider?.id ?? null, model: provider?.models[0] ?? null })); setDirty(true);
-                    }}>
-                      <option value="">Select a provider</option>
-                      <optgroup label="Organization providers">{providers.filter((p) => p.ownerId === null).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>
-                      {!isOrg && <optgroup label="My providers">{providers.filter((p) => p.ownerId === user?.id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</optgroup>}
-                    </select>
-                  </div>
-                  <div><label className="pxr-label" htmlFor="lens-model">MODEL</label>
-                    <input id="lens-model" className="pxr-input" list="lens-model-suggestions" disabled={!draft.providerId}
-                      required={Boolean(draft.providerId)} maxLength={255} placeholder="Select or enter a model"
-                      value={draft.model ?? ""} onChange={(e) => edit("model", e.target.value)} />
-                    <datalist id="lens-model-suggestions">
-                      {(providers.find((p) => p.id === draft.providerId)?.models ?? []).map((model) => <option key={model} value={model} />)}
-                    </datalist>
-                  </div>
+                  <ProviderModelFields idPrefix="lens" providers={providers} userId={user?.id} includePersonal={!isOrg}
+                    providerId={draft.providerId ?? ""} model={draft.model ?? ""} onChange={(providerId, model) => {
+                      setDraft(current => ({ ...current, providerId: providerId || null, model: model || null })); setDirty(true);
+                    }} />
                   <Link to="/admin" style={{ fontSize: 12, gridColumn: "1 / -1" }}>Manage providers →</Link>
                 </div>
                 <div>

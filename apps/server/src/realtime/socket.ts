@@ -69,6 +69,11 @@ export function broadcastAnnotationsChanged(docId: string): void {
   io?.to(roomFor(docId)).emit("annotations:changed", { docId });
 }
 
+/** A refetch signal only: private lens status stays behind the authenticated HTTP query. */
+export function broadcastLensRunsChanged(docId: string): void {
+  io?.to(roomFor(docId)).emit("lens-runs:changed", { docId });
+}
+
 /** User-specific inbox updates; the room is assigned from the signed session. */
 export function broadcastNotificationsChanged(userId: string): void {
   io?.to(`user:${userId}`).emit("notifications:changed");

@@ -1,7 +1,7 @@
 import type { Annotation, HumanAnnotation, Role } from "@paper-xray/contracts";
 
 export function canDeleteComment(comment: HumanAnnotation, userId: string | null, role?: Role): boolean {
-  return !!userId && (comment.authorId === userId || (role === "admin" && !!comment.authorRole && comment.authorRole !== "admin"));
+  return !!userId && (comment.authorId === userId || role === "admin");
 }
 
 /** Ancestors of live replies remain as tombstones; deleted leaves disappear. */
