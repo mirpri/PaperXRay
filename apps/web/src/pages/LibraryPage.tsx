@@ -276,7 +276,7 @@ export function LibraryPage() {
             {result.documents.length === 0 ? <p className="pxr-library-empty">
               {search ? "No papers match your search." : "No papers yet — upload a PDF to get started."}
             </p> : <ul className="pxr-library-list">
-              {result.documents.map(doc => <DocumentListItem key={doc.id} document={doc} canEdit={user?.role === "admin"}
+              {result.documents.map(doc => <DocumentListItem key={doc.id} document={doc} canEdit={user?.role === "admin" || user?.role === "curator"}
                           canDelete={user?.role === "admin"}
                           onChanged={() => setRefresh(value => value + 1)}
                           onDeleted={() => setRefresh(value => value + 1)} />)}

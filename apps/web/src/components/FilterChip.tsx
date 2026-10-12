@@ -1,3 +1,5 @@
+export const FILTER_CHIP_HEIGHT = 27;
+
 interface FilterChipProps {
   label: string;
   color?: string;
@@ -20,7 +22,7 @@ interface FilterChipProps {
 export function FilterChip({ label, count, active, ready, loading, loadingLabel, error, onClick, personal, onRerun, color }: FilterChipProps) {
   const text = personal ? `${label} (mine)` : label;
   return (
-    <span style={{ display: "inline-flex" }}>
+    <span style={{ display: "inline-flex", flexShrink: 0, height: FILTER_CHIP_HEIGHT }}>
       <button
         onClick={onClick}
         disabled={loading}
@@ -29,12 +31,14 @@ export function FilterChip({ label, count, active, ready, loading, loadingLabel,
         title={loading ? `${label}: ${loadingLabel ?? "running"}` : error ?? (ready ? (active ? `Hide ${label}` : `Show ${label}`) : `Run ${label}${personal ? " in this browser" : ""}`)}
         style={{
           fontSize: 11,
+          lineHeight: "15px",
           padding: "5px 10px",
           borderRadius: onRerun ? "3px 0 0 3px" : 3,
           border: color && active && ready ? `1px solid ${color}` : active && ready ? "1px solid var(--text)" : ready ? "1px solid var(--border-strong)" : "1px dashed #B0B0B0",
           background: color && active && ready ? `${color}1F` : active && ready ? "var(--text)" : "var(--surface)",
           color: color ? "var(--text)" : active && ready ? "#FFFFFF" : ready ? "#3C3C3C" : "var(--text-muted)",
           opacity: loading ? 0.6 : 1,
+          whiteSpace: "nowrap",
         }}
       >
         {color && <span aria-hidden="true" style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: color, marginRight: 6 }} />}
@@ -48,6 +52,7 @@ export function FilterChip({ label, count, active, ready, loading, loadingLabel,
           aria-label={`Run ${label} again`}
           style={{
             fontSize: 11,
+            lineHeight: "15px",
             padding: "5px 7px",
             borderRadius: "0 3px 3px 0",
             border: "1px solid var(--border-strong)",

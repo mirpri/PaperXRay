@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Children, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { PdfHighlighter, PdfLoader, type PdfHighlighterUtils } from "react-pdf-highlighter-extended";
 import workerUrl from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -38,7 +38,7 @@ import { Header } from "../components/Header";
 import { AnnotationCard, annotationCardElementId } from "../components/AnnotationCard";
 import { readerLensLabels } from "../components/lens-labels";
 import { commentThreads } from "../components/comment-threads";
-import { FilterChip } from "../components/FilterChip";
+import { FilterChip, FILTER_CHIP_HEIGHT } from "../components/FilterChip";
 import { NoteComposer } from "../components/NoteComposer";
 import { PdfToolbar } from "../components/PdfToolbar";
 import { useItemGeometries } from "../pdf/useItemGeometries";
@@ -50,8 +50,23 @@ import { findContainingNode, findTextRange, estimateCharOffsetFromPosition } fro
 import type { SelectionPosition } from "../components/NoteComposer";
 import { useToast } from "../ToastContext";
 
-const MIN_ASIDE_WIDTH = 260;
+const MIN_ASIDE_WIDTH = 320;
 const MAX_ASIDE_WIDTH = 640;
+
+const CHIP_HEIGHT = FILTER_CHIP_HEIGHT;
+const CHIP_GAP = 6;
+const LENS_AREA_PADDING_V = 11;
+
+function LensChipRows({ rows, children }: { rows: number; children: ReactNode }) {
+  const items = Children.toArray(children);
+  const lines: ReactNode[][] = Array.from({ length: rows }, () => []);
+  items.forEach((item, index) => lines[index % rows].push(item));
+  return <div style={{ display: "flex", flexDirection: "column", gap: CHIP_GAP, width: "max-content", minWidth: "100%" }}>
+    {lines.map((line, index) => <div key={index} style={{ display: "flex", gap: CHIP_GAP, height: CHIP_HEIGHT, alignItems: "center" }}>
+      {line}
+    </div>)}
+  </div>;
+}
 
 function titleFor(doc: Document): string {
   return doc.title ?? `Untitled (${doc.contentHash.slice(0, 8)})`;
@@ -87,12 +102,40 @@ export function ReaderPage() {
   const [scale, setScale] = useState(1.5);
   const [asideWidth, setAsideWidth] = useState(378);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
+  const [lensAreaRows, setLensAreaRows] = useState(2);
+  const lensAreaRef = useRef<HTMLDivElement>(null);
+  const lensAreaResizing = useRef(false);
 
   const activeDocIdRef = useRef(docId);
   activeDocIdRef.current = docId;
   const pdfContainerRef = useRef<HTMLDivElement>(null);
   const pdfHighlighterUtilsRef = useRef<PdfHighlighterUtils | undefined>(undefined);
   usePdfZoom(pdfContainerRef, pdfHighlighterUtilsRef, setScale);
+
+  // Lens area resize handlers
+  const startLensAreaResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    lensAreaResizing.current = true;
+    const startY = e.clientY;
+    const startRows = lensAreaRows;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!lensAreaResizing.current || !lensAreaRef.current) return;
+      const deltaY = e.clientY - startY;
+      const deltaRows = Math.round(deltaY / (CHIP_HEIGHT + CHIP_GAP));
+      const newRows = Math.max(1, Math.min(10, startRows + deltaRows));
+      setLensAreaRows(newRows);
+    };
+
+    const onMouseUp = () => {
+      lensAreaResizing.current = false;
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [lensAreaRows]);
 
   const reloadAnnotations = useCallback(() => {
     fetchAnnotations(docId).then(result => {
@@ -583,7 +626,18 @@ export function ReaderPage() {
             </div>
           </div>
 
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, padding: "11px 16px", borderBottom: "1px solid var(--border)" }}>
+          <div
+            ref={lensAreaRef}
+            className="pxr-lens-chip-scroll"
+            style={{
+              padding: `${LENS_AREA_PADDING_V}px 16px`,
+              overflowX: "auto",
+              overflowY: "hidden",
+              flexShrink: 0,
+              position: "relative",
+            }}
+          >
+            <LensChipRows rows={lensAreaRows}>
             {lenses?.map((lens) => {
               const ready = ranLensIds.has(lens.id);
               const personal = lens.ownerId !== null;
@@ -629,7 +683,24 @@ export function ReaderPage() {
               loading={false}
               onClick={() => toggleGroup(HUMAN_GROUP)}
             />
+            </LensChipRows>
           </div>
+            {/* Keep the resize handle outside the horizontally scrolling content. */}
+            <div
+              onMouseDown={startLensAreaResize}
+              style={{
+                height: 5,
+                flexShrink: 0,
+                marginTop: -4,
+                position: "relative",
+                borderBottom: "1px solid var(--border)",
+                cursor: "ns-resize",
+                background: "transparent",
+                zIndex: 10,
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.background = "var(--border-strong)"}
+              onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+            />
 
           <div style={{ flexGrow: 1, minHeight: 0, overflow: "auto", padding: "13px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
             {visibleAnnotations.length === 0 && (

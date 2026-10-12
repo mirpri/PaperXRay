@@ -3,6 +3,7 @@ import { isAgentAnnotation, sliceByCodePoints, lensColor } from "@paper-xray/con
 import { AnnotationDiscussion } from "./AnnotationDiscussion";
 import { annotationLensLabel } from "./lens-labels";
 import { UserIdentity } from "./UserIdentity";
+import { CommentText } from "./CommentText";
 
 export function annotationCardElementId(annotationId: string): string {
   return `pxr-annotation-card-${annotationId}`;
@@ -90,9 +91,9 @@ export function AnnotationCard({
       )
   );
   const content = <>
-    {agent && <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "#242424" }}>
+    {agent && <CommentText style={{ fontSize: 12.5, color: "#242424" }}>
         {annotation.comment}
-      </p>}
+      </CommentText>}
 
       <div
         onClick={(e) => { e.stopPropagation(); onJumpTo(annotation.id); }}

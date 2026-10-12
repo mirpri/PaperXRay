@@ -6,6 +6,7 @@ import { canDeleteComment } from "./comment-threads";
 import { UserIdentity } from "./UserIdentity";
 import { useToast } from "../ToastContext";
 import { AiReplyComposer } from "./AiReplyComposer";
+import { CommentText } from "./CommentText";
 
 type Props = {
   annotation: Annotation;
@@ -124,10 +125,10 @@ function CommentRow({ annotation, userId, role, onChanged, depth, rootHeader, ro
     </div>}
     </div>
     {depth === 0 && rootContent}
-    {human && mode !== "edit" && <p style={{ margin: 0, lineHeight: 1.65, whiteSpace: "pre-wrap", overflowWrap: "anywhere", color: deleted ? "var(--text-muted)" : "var(--text)" }}>
+    {human && mode !== "edit" && <CommentText style={{ color: deleted ? "var(--text-muted)" : "var(--text)" }}>
       {deleted ? "[Comment deleted]" : generating ? human.ai?.status === "queued" ? "AI reply queued…" : "AI is thinking…"
         : human.ai?.status === "failed" ? human.ai.error ?? "AI reply failed. Please try again." : human.body}
-    </p>}
+    </CommentText>}
     {!deleted && (!human?.ai || human.ai.status === "succeeded") && <div className="pxr-comment-votes" role="group" aria-label="Votes" aria-busy={voting} onClick={(e) => e.stopPropagation()}>
       <button type="button" aria-label={`Upvote, ${votes.upvotes}`} title={votes.myVote === 1 ? "Remove upvote" : "Upvote"}
         aria-pressed={votes.myVote === 1} disabled={!userId || voting || busy} onClick={() => void vote(1)}>

@@ -5,7 +5,7 @@ import { broadcastDocumentChanged } from "../realtime/socket.js";
 
 export const documentTitlesRouter: RouterType = Router();
 
-documentTitlesRouter.patch("/documents/:id", requireRole("admin"), async (req, res, next) => {
+documentTitlesRouter.patch("/documents/:id", requireRole("admin", "curator"), async (req, res, next) => {
   const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
   if (!title || Array.from(title).length > 500 || /[\u0000-\u001f\u007f]/.test(title)) {
     res.status(400).json({ error: "Title must be 1–500 characters without control characters" });

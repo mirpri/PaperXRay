@@ -23,6 +23,7 @@ import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/reposit
 import { seedPresetLenses } from "./db/lens-repository.js";
 import { PRESET_LENSES } from "./lenses/presets.js";
 import { pool } from "./db/pool.js";
+import { isDatabaseUnavailable } from "./db/errors.js";
 import { LENS_RUN_STATE_SCHEMA } from "./db/lens-run-state.js";
 import { startLensRunWorker } from "./lenses/background-runs.js";
 import { AI_REPLIES_SCHEMA, startAiReplyWorker } from "./lenses/ai-replies.js";
@@ -62,6 +63,12 @@ app.get("*", (req, res) => {
 
 const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   console.error(err);
+  if (res.headersSent) { _next(err); return; }
+  if (isDatabaseUnavailable(err)) {
+    res.setHeader("Retry-After", "3");
+    res.status(503).json({ error: "Database temporarily unavailable. Please try again.", code: "database_unavailable" });
+    return;
+  }
   res.status(500).json({ error: err instanceof Error ? err.message : "Internal error" });
 };
 app.use(errorHandler);

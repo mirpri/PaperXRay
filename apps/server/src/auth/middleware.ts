@@ -14,14 +14,18 @@ declare global {
   }
 }
 
-/** Reads and verifies the session cookie, attaching req.user if valid. Never rejects — routes that need a logged-in user use requireAuth below. */
+/** Attach valid sessions; forward lookup failures to Express instead of rejecting an async middleware promise. */
 export async function attachUser(req: Request, _res: Response, next: NextFunction): Promise<void> {
-  const raw = req.cookies?.[SESSION_COOKIE_NAME] as string | undefined;
-  const userId = verify(raw, config.session.secret);
-  if (userId) {
-    req.user = (await findUserById(userId)) ?? undefined;
+  try {
+    const raw = req.cookies?.[SESSION_COOKIE_NAME] as string | undefined;
+    const userId = verify(raw, config.session.secret);
+    if (userId) {
+      req.user = (await findUserById(userId)) ?? undefined;
+    }
+    next();
+  } catch (err) {
+    next(err);
   }
-  next();
 }
 
 export function requireAuth(req: Request, res: Response, next: NextFunction): void {

@@ -71,8 +71,10 @@ export function startLensRunWorker(): () => void {
   let active = 0;
   let polling = false;
   let stopped = false;
+  let failures = 0;
+  let retryAt = 0;
   async function tick() {
-    if (polling || stopped) return;
+    if (polling || stopped || Date.now() < retryAt) return;
     polling = true;
     try {
       await expireInterruptedLensRuns();
@@ -84,7 +86,13 @@ export function startLensRunWorker(): () => void {
         void execute(job).catch(err => console.error("Lens worker persistence failed:", err))
           .finally(() => { active--; });
       }
-    } catch (err) { console.error("Lens worker polling failed:", err); }
+      failures = 0;
+      retryAt = 0;
+    } catch (err) {
+      const delay = Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5));
+      retryAt = Date.now() + delay;
+      console.error(`Lens worker polling failed; retrying in ${delay / 1000}s:`, err);
+    }
     finally { polling = false; }
   }
   const interval = setInterval(() => { void tick(); }, 1000);

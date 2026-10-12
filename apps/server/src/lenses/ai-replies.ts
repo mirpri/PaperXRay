@@ -159,8 +159,10 @@ export function startAiReplyWorker(): () => void {
   let active = 0;
   let polling = false;
   let stopped = false;
+  let failures = 0;
+  let retryAt = 0;
   async function tick() {
-    if (polling || stopped) return;
+    if (polling || stopped || Date.now() < retryAt) return;
     polling = true;
     try {
       const [expired] = await pool.query<RowDataPacket[]>(
@@ -189,7 +191,13 @@ export function startAiReplyWorker(): () => void {
         void executeAiReply(row.reply_id, token, row.provider_id, row.model)
           .catch(err => console.error("AI reply persistence failed:", err)).finally(() => { active--; });
       }
-    } catch (err) { console.error("AI reply queue failed:", err); }
+      failures = 0;
+      retryAt = 0;
+    } catch (err) {
+      const delay = Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5));
+      retryAt = Date.now() + delay;
+      console.error(`AI reply queue failed; retrying in ${delay / 1000}s:`, err);
+    }
     finally { polling = false; }
   }
   const timer = setInterval(() => { void tick(); }, 1000);

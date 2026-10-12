@@ -73,7 +73,6 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
       }}
     >
       <textarea
-        autoFocus
         rows={3}
         placeholder="Write a note about the selected text…"
         value={text}
