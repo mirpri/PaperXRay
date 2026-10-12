@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  react-pdf-highlighter-extended@8.1.0: fa60a8b95b2bcc8491cd6f52a273b5bc4e7f1f6e0c5dd8bc62a7dd36eb5712ad
+
 importers:
 
   .:
@@ -104,7 +107,7 @@ importers:
         version: 19.3.0(react@19.3.0)
       react-pdf-highlighter-extended:
         specifier: ^8.1.0
-        version: 8.1.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 8.1.0(patch_hash=fa60a8b95b2bcc8491cd6f52a273b5bc4e7f1f6e0c5dd8bc62a7dd36eb5712ad)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       react-router-dom:
         specifier: ^6.28.0
         version: 6.30.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -3791,7 +3794,7 @@ snapshots:
 
   react-is@16.13.1: {}
 
-  react-pdf-highlighter-extended@8.1.0(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
+  react-pdf-highlighter-extended@8.1.0(patch_hash=fa60a8b95b2bcc8491cd6f52a273b5bc4e7f1f6e0c5dd8bc62a7dd36eb5712ad)(react-dom@19.3.0(react@19.3.0))(react@19.3.0):
     dependencies:
       lodash.debounce: 4.0.8
       pdfjs-dist: 4.10.38

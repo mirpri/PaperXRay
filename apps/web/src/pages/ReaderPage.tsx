@@ -46,7 +46,8 @@ import { usePdfZoom, clampPdfScale } from "../pdf/usePdfZoom";
 import { useCurrentPage } from "../pdf/useCurrentPage";
 import { PxrHighlightContainer } from "../pdf/PxrHighlightContainer";
 import { annotationsToHighlights, type PxrHighlight } from "../pdf/annotations-to-highlights";
-import { findContainingNode, findTextRange } from "../anchoring/find-text-range";
+import { findContainingNode, findTextRange, estimateCharOffsetFromPosition } from "../anchoring/find-text-range";
+import type { SelectionPosition } from "../components/NoteComposer";
 
 const MIN_ASIDE_WIDTH = 260;
 const MAX_ASIDE_WIDTH = 640;
@@ -81,6 +82,7 @@ export function ReaderPage() {
   const [error, setError] = useState<string | null>(null);
   const [scale, setScale] = useState(1.5);
   const [asideWidth, setAsideWidth] = useState(378);
+  const [asideCollapsed, setAsideCollapsed] = useState(false);
 
   const activeDocIdRef = useRef(docId);
   activeDocIdRef.current = docId;
@@ -337,9 +339,31 @@ export function ReaderPage() {
     }
   }
 
-  async function submitNote(selectedText: string, noteText: string) {
-    if (!doc || !nodes) return;
-    const range = findTextRange(doc.normalizedText, selectedText);
+  async function submitNote(selectedText: string, noteText: string, position?: SelectionPosition) {
+    if (!doc || !nodes || !charMap) return;
+    if (!position || !geometries) {
+      setError("PDF text positions are still loading — please try again shortly.");
+      return;
+    }
+
+    const charOffset = estimateCharOffsetFromPosition(
+      charMap,
+      position.page,
+      position.x,
+      position.y,
+      (page, itemIndex) => geometries.get(page)?.get(itemIndex),
+    );
+    const pageRuns = charMap.filter((run) => run.page === position.page);
+    if (charOffset === null || pageRuns.length === 0) {
+      setError("Could not locate the selected text on this PDF page.");
+      return;
+    }
+    const positionHint = { page: position.page, charOffset, pageRange: {
+      start: Math.min(...pageRuns.map((run) => run.charStart)),
+      end: Math.max(...pageRuns.map((run) => run.charEnd)),
+    } };
+
+    const range = findTextRange(doc.normalizedText, selectedText, positionHint);
     if (!range) {
       setError("Could not locate the selected text in the reassembled document — try selecting within a single paragraph.");
       return;
@@ -400,6 +424,8 @@ export function ReaderPage() {
             pageCount={doc?.pageCount ?? null}
             currentPage={currentPage}
             onGoToPage={goToPage}
+            asideCollapsed={asideCollapsed}
+            onToggleAside={() => setAsideCollapsed(!asideCollapsed)}
           />
           <div ref={pdfContainerRef} className="pxr-pdf-region" style={{ flexGrow: 1, minHeight: 0, position: "relative", background: "var(--bg)", overflow: "hidden" }}>
             <PdfLoader
@@ -430,8 +456,9 @@ export function ReaderPage() {
         {density.length > 0 && <DensityBar density={density} currentPage={currentPage} onGoToPage={goToPage} />}
 
         {/* biome-ignore lint: mouse-driven resizer, not a semantic control */}
-        <div className="pxr-resizer" onMouseDown={startResizing} />
+        {!asideCollapsed && <div className="pxr-resizer" onMouseDown={startResizing} />}
 
+        {!asideCollapsed && (
         <aside
           style={{
             width: asideWidth,
@@ -456,7 +483,7 @@ export function ReaderPage() {
             <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
               <span style={{ fontSize: 13, fontWeight: 500 }}>Annotations</span>
               <span className="mono" style={{ fontSize: 10, color: "var(--text-muted)" }}>
-                {visibleAnnotations.length} / {rootAnnotations.length} SHOWN
+                {visibleAnnotations.length} / {rootAnnotations.length}
               </span>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -569,6 +596,7 @@ export function ReaderPage() {
             ))}
           </div>
         </aside>
+        )}
       </div>
 
       {notice && !error && (

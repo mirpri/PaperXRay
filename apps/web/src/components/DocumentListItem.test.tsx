@@ -2,9 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { MemoryRouter } from "react-router-dom";
 import { expect, it } from "vitest";
 import { DocumentListItem } from "./DocumentListItem";
+import { ToastProvider } from "../ToastContext";
 const document = { id: "paper", contentHash: "abc12345", title: "Extracted paper title", pageCount: 2, createdAt: "2026-01-01" };
 function render(canEdit: boolean) {
-  return renderToStaticMarkup(<MemoryRouter><DocumentListItem document={document} canEdit={canEdit} onChanged={() => {}} /></MemoryRouter>);
+  return renderToStaticMarkup(<MemoryRouter><ToastProvider><DocumentListItem document={document} canEdit={canEdit} onChanged={() => {}} /></ToastProvider></MemoryRouter>);
 }
 it("renders the extracted title as a reader link and an accessible edit action for admins", () => {
   const html = render(true);

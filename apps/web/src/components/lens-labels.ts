@@ -2,7 +2,8 @@ import type { AgentAnnotation, Annotation, LensSpec } from "@paper-xray/contract
 
 export function annotationLensLabel(annotation: AgentAnnotation, viewerId: string | null): string {
   const name = annotation.lensName ?? "Lens";
-  return (annotation.ownerName && annotation.ownerId !== viewerId)
+  const isForeignOwner = annotation.ownerId && annotation.ownerId !== viewerId;
+  return isForeignOwner
     ? `${name} (${annotation.ownerName ?? "Member"})`
     : name;
 }

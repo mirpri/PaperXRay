@@ -94,30 +94,30 @@ export function AnnotationCard({
         {annotation.comment}
       </p>}
 
-      {agent && (
-        <div
-          onClick={(e) => { e.stopPropagation(); onJumpTo(annotation.id); }}
-          style={{
-            background: "#F2F2F2",
-            borderRadius: 3,
-            padding: "9px 11px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 5,
-            cursor: "pointer",
-          }}
-        >
-          <span className="mono" style={{ fontSize: 8, letterSpacing: "0.16em", color: "var(--text-muted)" }}>
-            EVIDENCE
-          </span>
-          <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: 12, lineHeight: 1.6, color: "#4A4A4A" }}>
-            {sliceByCodePoints(normalizedText, annotation.evidenceSpan.start, annotation.evidenceSpan.end)}
-          </span>
+      <div
+        onClick={(e) => { e.stopPropagation(); onJumpTo(annotation.id); }}
+        style={{
+          background: "#F2F2F2",
+          borderRadius: 3,
+          padding: "9px 11px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 5,
+          cursor: "pointer",
+        }}
+      >
+        <span className="mono" style={{ fontSize: 8, letterSpacing: "0.16em", color: "var(--text-muted)" }}>
+          {agent ? "EVIDENCE" : "QUOTE"}
+        </span>
+        <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: 12, lineHeight: 1.6, color: "#4A4A4A" }}>
+          {sliceByCodePoints(normalizedText, annotation.anchor.charRange.start, annotation.anchor.charRange.end)}
+        </span>
+        {agent && (
           <span className="mono" style={{ fontSize: 9, color: "var(--text-soft)" }}>
             confidence {annotation.confidence.toFixed(2)}
           </span>
-        </div>
-      )}
+        )}
+      </div>
   </>;
 
   return (

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { PanelRightClose, PanelRightOpen } from "lucide-react";
 
 import { ZOOM_STEPS } from "../pdf/usePdfZoom";
 
@@ -9,6 +10,8 @@ export function PdfToolbar({
   pageCount,
   currentPage,
   onGoToPage,
+  asideCollapsed,
+  onToggleAside,
 }: {
   scale: number;
   onScaleChange: (scale: number) => void;
@@ -16,6 +19,8 @@ export function PdfToolbar({
   /** Tracked from actual scroll position (see ../pdf/useCurrentPage.ts) — the page input mirrors it until the user types their own value. */
   currentPage: number;
   onGoToPage: (page: number) => void;
+  asideCollapsed: boolean;
+  onToggleAside: () => void;
 }) {
   const [pageInput, setPageInput] = useState(String(currentPage));
 
@@ -71,6 +76,15 @@ export function PdfToolbar({
       </button>
       <button onClick={() => goToPage(Number(pageInput) || 1)} style={{ fontWeight: 500 }}>
         Go
+      </button>
+      <div className="pxr-toolbar-sep" />
+      <button
+        onClick={onToggleAside}
+        aria-label={asideCollapsed ? "Show annotations" : "Hide annotations"}
+        title={asideCollapsed ? "Show annotations" : "Hide annotations"}
+        style={{ display: "flex", alignItems: "center", justifyContent: "center" }}
+      >
+        {asideCollapsed ? <PanelRightOpen size={14} /> : <PanelRightClose size={14} />}
       </button>
     </div>
   );

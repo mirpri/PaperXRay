@@ -1,0 +1,20 @@
+diff --git a/dist/esm/components/PdfHighlighter.js b/dist/esm/components/PdfHighlighter.js
+index 49b55d0b33b3ce096290d107ffc2ce93167b1bc1..53462f87359475dc3dd2e98fd006f489d8a7fcbf 100644
+--- a/dist/esm/components/PdfHighlighter.js
++++ b/dist/esm/components/PdfHighlighter.js
+@@ -88,7 +88,14 @@ export const PdfHighlighter = ({ highlights, onScrollAway, pdfScaleValue = DEFAU
+     useLayoutEffect(() => {
+         if (!containerNodeRef.current)
+             return;
+-        resizeObserverRef.current = new ResizeObserver(handleScaleValue);
++        resizeObserverRef.current = new ResizeObserver(() => {
++            // Numeric scales are controlled by the live viewer (including
++            // wheel/pinch gestures). Reapplying a delayed React prop here
++            // rolls an in-progress zoom back. Only fit presets need resizing.
++            if (typeof pdfScaleValue !== "number") {
++                handleScaleValue();
++            }
++        });
+         resizeObserverRef.current.observe(containerNodeRef.current);
+         const doc = containerNodeRef.current.ownerDocument;
+         eventBusRef.current.on("textlayerrendered", renderHighlightLayers);

@@ -3,3 +3,5 @@ packages:
   - "packages/*"
 allowBuilds:
   esbuild: true
+patchedDependencies:
+  react-pdf-highlighter-extended@8.1.0: patches/react-pdf-highlighter-extended@8.1.0.patch
