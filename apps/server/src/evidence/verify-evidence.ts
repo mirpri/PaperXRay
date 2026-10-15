@@ -1,5 +1,5 @@
 import type { CharRange, LensScope, Node as IrNode } from "@paper-xray/contracts";
-import { codePointLength } from "@paper-xray/contracts";
+import { codePointLength, sliceByCodePoints } from "@paper-xray/contracts";
 
 /**
  * Server-side re-verification of an agent's evidenceSpan
@@ -46,12 +46,19 @@ export function verifyEvidence(params: {
     evidenceSpan.end <= totalLength &&
     evidenceSpan.start < evidenceSpan.end;
 
-  const withinScope =
-    existsInText &&
-    (scope === "all" ||
-      nodes.some(
-        (n) => n.type === scope && evidenceSpan.start >= n.charRange.start && evidenceSpan.end <= n.charRange.end,
-      ));
+  // A passage can cover several matching regions, with whitespace separators
+  // between them. Still reject any actual text outside the declared scope.
+  let coveredUntil = evidenceSpan.start;
+  if (existsInText && scope !== "all") {
+    const regions = nodes.filter(node => node.type === scope && node.charRange.end > evidenceSpan.start && node.charRange.start < evidenceSpan.end)
+      .sort((a, b) => a.charRange.start - b.charRange.start);
+    for (const region of regions) {
+      if (region.charRange.start > coveredUntil && sliceByCodePoints(normalizedText, coveredUntil, region.charRange.start).trim()) break;
+      coveredUntil = Math.max(coveredUntil, Math.min(evidenceSpan.end, region.charRange.end));
+    }
+  }
+  const withinScope = existsInText && (scope === "all" || coveredUntil >= evidenceSpan.end ||
+    (coveredUntil > evidenceSpan.start && !sliceByCodePoints(normalizedText, coveredUntil, evidenceSpan.end).trim()));
 
   return {
     existsInText,

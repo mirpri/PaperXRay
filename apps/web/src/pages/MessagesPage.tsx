@@ -9,6 +9,7 @@ import { useToast } from "../ToastContext";
 
 const messageDescriptions: Record<AnnotationNotification["kind"], string> = {
   reply: "replied to your comment",
+  paper_comment: "commented on a paper you subscribe to",
   upvote: "upvoted your annotation",
   downvote: "downvoted your annotation",
   cancel_upvote: "removed an upvote from your annotation",
@@ -75,7 +76,7 @@ export function MessagesPage() {
     <main className="pxr-admin-main pxr-settings-scroll">
       <div className="pxr-messages-content">
         <div className="pxr-messages-heading">
-          <div><h1>Messages</h1><p>{unreadCount ? `${unreadCount} unread` : "Replies and votes on your annotations appear here."}</p></div>
+          <div><h1>Messages</h1><p>{unreadCount ? `${unreadCount} unread` : "Replies, votes, and comments on subscribed papers appear here."}</p></div>
           <button type="button" className="pxr-btn" disabled={!unreadCount || markingAll} onClick={() => void readAll()}>{markingAll ? "Updating…" : "Mark all read"}</button>
         </div>
         {loading && messages.length === 0 ? <p role="status">Loading messages…</p> : messages.length === 0 ? <p className="pxr-message-empty">No messages yet.</p> : null}

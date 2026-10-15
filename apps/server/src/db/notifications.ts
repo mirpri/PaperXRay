@@ -2,6 +2,7 @@ import type { RowDataPacket, ResultSetHeader } from "mysql2";
 import type { AnnotationNotification, NotificationPage } from "@paper-xray/contracts";
 import { pool } from "./pool.js";
 import { voteNotificationJoins, visibleVoteNotification } from "./votes.js";
+import { paperCommentInbox, paperCommentJoins, visiblePaperComment } from "./paper-subscriptions.js";
 
 // Access follows the current thread root; hiding a Lens run also hides its notifications.
 const joins = `FROM notifications n
@@ -54,10 +55,10 @@ export function parseNotificationCursor(raw: unknown): { time: Date; id: string 
   return Number.isFinite(date.getTime()) ? { time: date, id } : null;
 }
 export async function listNotifications(userId: string, cursor?: { time: Date; id: string } | null): Promise<NotificationPage> {
-  const values: unknown[] = [userId, userId, userId, userId];
+  const values: unknown[] = [userId, userId, userId, userId, userId];
   let before = "";
   if (cursor) { before = " WHERE (created_at < ? OR (created_at = ? AND id < ?))"; values.push(cursor.time, cursor.time, cursor.id); }
-  const [rows] = await pool.query<NotificationRow[]>(`SELECT * FROM (${inbox} UNION ALL ${collectionInbox} UNION ALL ${membershipInbox}) inbox${before} ORDER BY created_at DESC, id DESC LIMIT 31`, values);
+  const [rows] = await pool.query<NotificationRow[]>(`SELECT * FROM (${inbox} UNION ALL ${collectionInbox} UNION ALL ${membershipInbox} UNION ALL ${paperCommentInbox}) inbox${before} ORDER BY created_at DESC, id DESC LIMIT 31`, values);
   const notifications: AnnotationNotification[] = rows.slice(0, 30).map(r => ({
     id: r.id, kind: r.kind, actorId: r.actor_id ?? "deleted-user", actorName: r.actor_name ?? "Deleted user", docId: r.doc_id, documentTitle: r.document_title,
     targetId: r.target_id, targetKind: r.target_kind, threadRootId: r.thread_root_id, threadRootKind: r.thread_root_kind,
@@ -73,10 +74,15 @@ export async function countUnreadNotifications(userId: string): Promise<number> 
     (SELECT COUNT(*) FROM vote_notifications v ${voteNotificationJoins} WHERE ${visibleVoteNotification} AND v.read_at IS NULL) +
     (SELECT COUNT(*) FROM collection_notifications WHERE recipient_id = ? AND read_at IS NULL) +
     (SELECT COUNT(*) FROM membership_notifications mn JOIN users u ON u.id = mn.recipient_id
-      WHERE mn.recipient_id = ? AND u.role = 'admin' AND u.status = 'active' AND mn.read_at IS NULL) AS unread`, [userId, userId, userId, userId]);
+      WHERE mn.recipient_id = ? AND u.role = 'admin' AND u.status = 'active' AND mn.read_at IS NULL) +
+    (SELECT COUNT(*) FROM paper_comment_notifications pn ${paperCommentJoins} WHERE ${visiblePaperComment} AND pn.read_at IS NULL)
+    AS unread`, [userId, userId, userId, userId, userId]);
   return Number(rows[0].unread);
 }
 export async function markNotificationRead(userId: string, id: string): Promise<boolean> {
+  const [paperResult] = await pool.query<ResultSetHeader>(`UPDATE paper_comment_notifications pn ${paperCommentJoins}
+    SET pn.read_at = COALESCE(pn.read_at, NOW(3)) WHERE ${visiblePaperComment} AND pn.id = ?`, [userId, id]);
+  if (paperResult.affectedRows > 0) return true;
   const [result] = await pool.query<ResultSetHeader>(`UPDATE notifications n
     JOIN human_annotations reply ON reply.id = n.reply_id AND reply.doc_id = n.doc_id
     LEFT JOIN human_annotations h ON reply.thread_root_kind = 'human' AND h.id = reply.thread_root_id AND h.doc_id = n.doc_id
@@ -97,6 +103,8 @@ export async function markNotificationRead(userId: string, id: string): Promise<
   return membershipResult.affectedRows > 0;
 }
 export async function markAllNotificationsRead(userId: string): Promise<void> {
+  await pool.query(`UPDATE paper_comment_notifications pn ${paperCommentJoins}
+    SET pn.read_at = NOW(3) WHERE ${visiblePaperComment} AND pn.read_at IS NULL`, [userId]);
   await pool.query(`UPDATE notifications n
     JOIN human_annotations reply ON reply.id = n.reply_id AND reply.doc_id = n.doc_id
     LEFT JOIN human_annotations h ON reply.thread_root_kind = 'human' AND h.id = reply.thread_root_id AND h.doc_id = n.doc_id

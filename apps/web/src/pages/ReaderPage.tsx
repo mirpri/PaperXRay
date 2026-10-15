@@ -23,7 +23,6 @@ import { DensityBar } from "../components/DensityBar";
 import {
   applyDisplayFilter,
   groupKey,
-  HUMAN_GROUP,
   loadDisplaySettings,
   pageDensity,
   type DisplaySettings,
@@ -35,8 +34,9 @@ import { useLensRunActivity } from "../personal/useLensRunActivity";
 import { runPersonalLens } from "../personal/run-personal-lens";
 import { useDocumentSocket } from "../useDocumentSocket";
 import { Header } from "../components/Header";
+import { PaperSubscriptionButton } from "../components/PaperSubscriptionButton";
 import { AnnotationCard, annotationCardElementId } from "../components/AnnotationCard";
-import { readerLensLabels } from "../components/lens-labels";
+import { annotationLensLabel, readerLensLabels } from "../components/lens-labels";
 import { commentThreads } from "../components/comment-threads";
 import { FilterChip, FILTER_CHIP_HEIGHT } from "../components/FilterChip";
 import { NoteComposer } from "../components/NoteComposer";
@@ -46,7 +46,7 @@ import { usePdfZoom, clampPdfScale } from "../pdf/usePdfZoom";
 import { useCurrentPage } from "../pdf/useCurrentPage";
 import { PxrHighlightContainer } from "../pdf/PxrHighlightContainer";
 import { annotationsToHighlights, type PxrHighlight } from "../pdf/annotations-to-highlights";
-import { findContainingNode, findTextRange, estimateCharOffsetFromPosition } from "../anchoring/find-text-range";
+import { findContainingNode, findTextRange, estimateCharOffsetFromPosition, selectionRectsToRanges } from "../anchoring/find-text-range";
 import type { SelectionPosition } from "../components/NoteComposer";
 import { useToast } from "../ToastContext";
 
@@ -55,17 +55,29 @@ const MAX_ASIDE_WIDTH = 640;
 
 const CHIP_HEIGHT = FILTER_CHIP_HEIGHT;
 const CHIP_GAP = 6;
-const LENS_AREA_PADDING_V = 11;
+const LENS_AREA_PADDING_V = 8;
 
 function LensChipRows({ rows, children }: { rows: number; children: ReactNode }) {
   const items = Children.toArray(children);
-  const lines: ReactNode[][] = Array.from({ length: rows }, () => []);
-  items.forEach((item, index) => lines[index % rows].push(item));
+  const rowCount = Math.min(rows, items.length);
+  const lines: ReactNode[][] = Array.from({ length: rowCount }, () => []);
+  items.forEach((item, index) => lines[index % rowCount].push(item));
   return <div style={{ display: "flex", flexDirection: "column", gap: CHIP_GAP, width: "max-content", minWidth: "100%" }}>
     {lines.map((line, index) => <div key={index} style={{ display: "flex", gap: CHIP_GAP, height: CHIP_HEIGHT, alignItems: "center" }}>
       {line}
     </div>)}
   </div>;
+}
+
+function ChipSection({ label, rows = 1, children }: { label: string; rows?: number; children: ReactNode }) {
+  const items = Children.toArray(children);
+  if (!items.length) return null;
+  return <section aria-label={label} style={{ minWidth: 0, display: "grid", gridTemplateColumns: "42px minmax(0, 1fr)", gap: 6 }}>
+    <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: `${CHIP_HEIGHT}px`, whiteSpace: "nowrap" }}>{label}</div>
+    <div className="pxr-lens-chip-scroll" style={{ overflowX: "auto", overflowY: "hidden" }}>
+      <LensChipRows rows={rows}>{items}</LensChipRows>
+    </div>
+  </section>;
 }
 
 function titleFor(doc: Document): string {
@@ -102,7 +114,7 @@ export function ReaderPage() {
   const [scale, setScale] = useState(1.5);
   const [asideWidth, setAsideWidth] = useState(378);
   const [asideCollapsed, setAsideCollapsed] = useState(false);
-  const [lensAreaRows, setLensAreaRows] = useState(2);
+  const [lensAreaRows, setLensAreaRows] = useState(1);
   const lensAreaRef = useRef<HTMLDivElement>(null);
   const lensAreaResizing = useRef(false);
 
@@ -227,7 +239,7 @@ export function ReaderPage() {
 
   const threads = useMemo(() => commentThreads(annotations), [annotations]);
   const rootAnnotations = threads.roots;
-  const displayResult = useMemo(() => applyDisplayFilter(rootAnnotations, display), [rootAnnotations, display]);
+  const displayResult = useMemo(() => applyDisplayFilter(rootAnnotations, display, user?.id ?? null), [rootAnnotations, display, user?.id]);
   const [sortBy, setSortBy] = useState<"position" | "confidence" | "time" | "upvote">("position");
   const [sortAsc, setSortAsc] = useState(true);
   const visibleAnnotations = useMemo(() => {
@@ -282,11 +294,29 @@ export function ReaderPage() {
   const countsByGroup = useMemo(() => {
     const counts = new Map<string, number>();
     for (const a of rootAnnotations) {
-      const key = groupKey(a);
+      const key = groupKey(a, user?.id ?? null);
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
     return counts;
-  }, [rootAnnotations]);
+  }, [rootAnnotations, user?.id]);
+
+  const filterGroups = useMemo(() => {
+    const shared = new Map<string, { label: string; color: string }>();
+    const uncatalogued = new Map<string, { label: string; color: string }>();
+    const people = new Map<string, string>();
+    const catalog = new Set((lenses ?? []).map(lens => lens.id));
+    for (const annotation of rootAnnotations) {
+      const key = groupKey(annotation, user?.id ?? null);
+      if ("authorId" in annotation) {
+        people.set(key, annotation.authorName ?? (annotation.authorId ? "Member" : "Deleted user"));
+      } else {
+        const metadata = { label: annotationLensLabel(annotation, user?.id ?? null), color: lensColor(annotation.agentId, annotation.lensColor) };
+        if (annotation.ownerId && annotation.ownerId !== user?.id) shared.set(key, metadata);
+        else if (!catalog.has(annotation.agentId)) uncatalogued.set(key, metadata);
+      }
+    }
+    return { shared, uncatalogued, people };
+  }, [rootAnnotations, lenses, user?.id]);
 
   useEffect(() => {
     if (!messageCommentId) return;
@@ -298,7 +328,7 @@ export function ReaderPage() {
     const root = rootAnnotations.find(a => a.id === rootId);
     if (!root) return;
     if (!visibleAnnotations.some(a => a.id === root.id)) {
-      setDisplay(current => ({ ...current, hiddenGroups: current.hiddenGroups.filter(key => key !== groupKey(root)) }));
+      setDisplay(current => ({ ...current, hiddenGroups: current.hiddenGroups.filter(key => key !== groupKey(root, user?.id ?? null)) }));
       return;
     }
     let element: HTMLElement | null = null;
@@ -313,7 +343,7 @@ export function ReaderPage() {
       timer = setTimeout(() => { element?.classList.remove("pxr-comment-message-target"); setActiveAnnotationId(null); }, 3300);
     });
     return () => { cancelAnimationFrame(frame); clearTimeout(timer); element?.classList.remove("pxr-comment-message-target"); };
-  }, [docId, messageCommentId, annotations, rootAnnotations, visibleAnnotations]);
+  }, [docId, messageCommentId, annotations, rootAnnotations, visibleAnnotations, user?.id]);
 
   /**
    * Zoom, driven directly through the live pdf.js viewer instance
@@ -443,7 +473,7 @@ export function ReaderPage() {
     }
   }
 
-  async function submitNote(selectedText: string, noteText: string, position?: SelectionPosition) {
+  async function submitNote(selectedText: string, noteText: string, position?: SelectionPosition, color?: string) {
     if (!doc || !nodes || !charMap) return;
     if (!position || !geometries) {
       showToast("PDF text positions are still loading — please try again shortly.", "error");
@@ -467,20 +497,25 @@ export function ReaderPage() {
       end: Math.max(...pageRuns.map((run) => run.charEnd)),
     } };
 
-    const range = findTextRange(doc.normalizedText, selectedText, positionHint);
-    if (!range) {
-      showToast("Could not locate the selected text in the reassembled document — try selecting within a single paragraph.", "error");
+    const textRange = findTextRange(doc.normalizedText, selectedText, positionHint);
+    const ranges = textRange ? [textRange] : selectionRectsToRanges(doc.normalizedText, position.rects ?? [], charMap,
+      (page, itemIndex) => geometries.get(page)?.get(itemIndex));
+    if (!ranges.length) {
+      showToast("Could not locate the selected text. Please try selecting it again.", "error");
       return;
     }
-    const node = findContainingNode(nodes, range.start);
+    const range = { start: ranges[0].start, end: ranges[ranges.length - 1].end };
+    const node = findContainingNode(nodes, range.start) ?? nodes.find(node => ranges.some(selected =>
+      node.charRange.start < selected.end && node.charRange.end > selected.start));
     if (!node) {
       showToast("That selection falls outside any recognized paragraph.", "error");
       return;
     }
     try {
       await createHumanAnnotation(docId, {
-        anchor: { charRange: range, contextPrefix: "", contextSuffix: "", nodeId: node.id },
+        anchor: { charRange: range, ...(ranges.length > 1 ? { charRanges: ranges } : {}), contextPrefix: "", contextSuffix: "", nodeId: node.id },
         body: noteText,
+        color,
         visibility: "org",
       });
       reloadAnnotations();
@@ -510,6 +545,7 @@ export function ReaderPage() {
             >
               {doc ? titleFor(doc) : "Loading…"}
             </span>
+            {user && doc && <PaperSubscriptionButton key={`${docId}:${user.id}`} docId={docId} />}
           </div>
         }
       />
@@ -539,6 +575,7 @@ export function ReaderPage() {
                   pdfScaleValue={scale}
                   enableAreaSelection={() => false}
                   selectionTip={<NoteComposer onSave={submitNote} />}
+                  onSelection={selection => { selection.makeGhostHighlight(); }}
                   utilsRef={(utils) => {
                     pdfHighlighterUtilsRef.current = utils;
                   }}
@@ -628,16 +665,16 @@ export function ReaderPage() {
 
           <div
             ref={lensAreaRef}
-            className="pxr-lens-chip-scroll"
             style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
               padding: `${LENS_AREA_PADDING_V}px 16px`,
-              overflowX: "auto",
-              overflowY: "hidden",
               flexShrink: 0,
               position: "relative",
             }}
           >
-            <LensChipRows rows={lensAreaRows}>
+            <ChipSection label="Lenses" rows={lensAreaRows}>
             {lenses?.map((lens) => {
               const ready = ranLensIds.has(lens.id);
               const personal = lens.ownerId !== null;
@@ -660,14 +697,11 @@ export function ReaderPage() {
                 />
               );
             })}
-            {/* Shared personal runs and deleted lenses still get a named toggle outside the catalog. */}
-            {[...countsByGroup.keys()]
-              .filter((key) => key !== HUMAN_GROUP && !(lenses ?? []).some(lens => lens.id === key))
-              .map((key) => (
+            {[...filterGroups.uncatalogued].map(([key, group]) => (
                 <FilterChip
                   key={key}
-                  label={lensNames.get(key) ?? "Lens"}
-                  color={lensColors.get(key) ?? lensColor(key)}
+                  label={group.label}
+                  color={group.color}
                   count={countsByGroup.get(key) ?? 0}
                   ready
                   active={!display.hiddenGroups.includes(key)}
@@ -675,15 +709,17 @@ export function ReaderPage() {
                   onClick={() => toggleGroup(key)}
                 />
               ))}
-            <FilterChip
-              label="Human"
-              count={countsByGroup.get(HUMAN_GROUP) ?? 0}
-              ready
-              active={!display.hiddenGroups.includes(HUMAN_GROUP)}
-              loading={false}
-              onClick={() => toggleGroup(HUMAN_GROUP)}
-            />
-            </LensChipRows>
+            </ChipSection>
+            <ChipSection label="Shared">
+              {[...filterGroups.shared].map(([key, group]) => <FilterChip key={key}
+                label={group.label} color={group.color} count={countsByGroup.get(key) ?? 0}
+                ready active={!display.hiddenGroups.includes(key)} loading={false} onClick={() => toggleGroup(key)} />)}
+            </ChipSection>
+            <ChipSection label="People">
+              {[...filterGroups.people].map(([key, name]) => <FilterChip key={key}
+                label={name} color="#8A8A8A" count={countsByGroup.get(key) ?? 0}
+                ready active={!display.hiddenGroups.includes(key)} loading={false} onClick={() => toggleGroup(key)} />)}
+            </ChipSection>
           </div>
             {/* Keep the resize handle outside the horizontally scrolling content. */}
             <div
@@ -715,7 +751,7 @@ export function ReaderPage() {
                 normalizedText={doc?.normalizedText ?? ""}
                 active={a.id === activeAnnotationId}
                 onJumpTo={jumpToHighlight}
-                lensName={"agentId" in a ? lensNames.get(a.agentId) : undefined}
+                lensName={"agentId" in a ? a.ownerId && a.ownerId !== user?.id ? annotationLensLabel(a, user?.id ?? null) : lensNames.get(a.agentId) : undefined}
                 color={"agentId" in a ? lensColors.get(a.agentId) : undefined}
                 currentUserId={user?.id ?? null}
                 currentUserRole={user?.role}

@@ -3,7 +3,7 @@ import { isAgentAnnotation } from "@paper-xray/contracts";
 
 /** Display controls filter by group, without a per-lens count limit. */
 export interface DisplaySettings {
-  /** Group keys (a lens id, or "human") switched off. */
+  /** Group keys: a lens id, a shared run, or a comment author. */
   hiddenGroups: string[];
 }
 
@@ -13,8 +13,9 @@ export const DEFAULT_DISPLAY_SETTINGS: DisplaySettings = {
 
 export const HUMAN_GROUP = "human";
 
-export function groupKey(a: Annotation): string {
-  return isAgentAnnotation(a) ? a.agentId : HUMAN_GROUP;
+export function groupKey(a: Annotation, viewerId: string | null = null): string {
+  if (!isAgentAnnotation(a)) return `${HUMAN_GROUP}:${a.authorId ?? "deleted"}`;
+  return a.ownerId && a.ownerId !== viewerId ? `run:${a.runId}` : a.agentId;
 }
 
 export interface DisplayResult {
@@ -22,13 +23,13 @@ export interface DisplayResult {
   hiddenByGroup: number;
 }
 
-export function applyDisplayFilter(annotations: Annotation[], settings: DisplaySettings): DisplayResult {
+export function applyDisplayFilter(annotations: Annotation[], settings: DisplaySettings, viewerId: string | null = null): DisplayResult {
   const hiddenGroups = new Set(settings.hiddenGroups);
   let hiddenByGroup = 0;
 
   const candidates: Annotation[] = [];
   for (const a of annotations) {
-    if (hiddenGroups.has(groupKey(a))) {
+    if (hiddenGroups.has(groupKey(a, viewerId)) || (!isAgentAnnotation(a) && hiddenGroups.has(HUMAN_GROUP))) {
       hiddenByGroup++;
       continue;
     }

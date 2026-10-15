@@ -1,6 +1,42 @@
 import type { CharRange, Node as IrNode } from "@paper-xray/contracts";
 import { codePointLength, toCodePoints } from "@paper-xray/contracts";
 import type { CharMap } from "@paper-xray/contracts";
+import type { ItemGeometry, PdfRect } from "./reverse-map";
+
+/** Resolve actual PDF selection rectangles when visual and reconstructed reading orders differ. */
+export function selectionRectsToRanges(
+  normalizedText: string,
+  rects: PdfRect[],
+  charMap: CharMap,
+  getGeometry: (page: number, itemIndex: number) => ItemGeometry | undefined,
+): CharRange[] {
+  const ranges: CharRange[] = [];
+  for (const run of charMap) {
+    const item = getGeometry(run.page, run.itemIndex);
+    if (!item || item.width <= 0 || item.height <= 0) continue;
+    for (const rect of rects) {
+      if (rect.page !== run.page) continue;
+      const verticalOverlap = Math.min(item.y + item.height, rect.y + rect.height) - Math.max(item.y, rect.y);
+      if (verticalOverlap < Math.min(item.height, rect.height) * 0.2 || verticalOverlap <= 0) continue;
+      const left = Math.max(item.x, rect.x), right = Math.min(item.x + item.width, rect.x + rect.width);
+      if (right <= left) continue;
+      const length = run.charEnd - run.charStart;
+      const start = run.charStart + Math.max(0, Math.floor((left - item.x) / item.width * length + 0.01));
+      const end = run.charStart + Math.min(length, Math.ceil((right - item.x) / item.width * length - 0.01));
+      if (start < end) ranges.push({ start, end });
+    }
+  }
+  ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+  const merged: CharRange[] = [];
+  const text = toCodePoints(normalizedText);
+  for (const range of ranges) {
+    const previous = merged.at(-1);
+    if (previous && (range.start <= previous.end || text.slice(previous.end, range.start).every(char => /\s/.test(char)))) {
+      previous.end = Math.max(previous.end, range.end);
+    } else merged.push({ ...range });
+  }
+  return merged;
+}
 
 /**
  * Splits `s` into a whitespace-collapsed string (every run of whitespace ->
@@ -48,11 +84,8 @@ function collapseWhitespace(s: string): { collapsed: string; spans: Array<[numbe
  * fixes the bug where selecting "1" in one section would highlight "1" in
  * a different section above it.
  *
- * This does NOT handle a selection that crosses a two-column page's
- * reading-order reordering (../../apps/server/src/reassembly/columns.ts) —
- * the visually-selected text and normalizedText's reading order can
- * genuinely diverge there, which is a real limitation, not a whitespace
- * mismatch.
+ * If reading-order reassembly makes the selection discontinuous, callers
+ * can resolve its actual PDF rectangles with selectionRectsToRanges.
  */
 export function findTextRange(
   normalizedText: string,

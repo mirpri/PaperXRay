@@ -33,6 +33,16 @@ export interface LensRun {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://localhost:3001/api";
 
+export async function fetchPaperSubscription(docId: string): Promise<{ subscribed: boolean }> {
+  return jsonOrThrow(await fetch(`${API_BASE}/documents/${docId}/subscription`, { credentials: "include" }), "Failed to load subscription");
+}
+
+export async function setPaperSubscription(docId: string, subscribed: boolean): Promise<{ subscribed: boolean }> {
+  return jsonOrThrow(await fetch(`${API_BASE}/documents/${docId}/subscription`, {
+    method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subscribed }),
+  }), "Failed to update subscription");
+}
+
 export function documentFileUrl(docId: string): string {
   return `${API_BASE}/documents/${docId}/file`;
 }
@@ -428,7 +438,7 @@ export async function fetchLensRuns(docId: string): Promise<LensRun[]> {
 
 export async function createHumanAnnotation(
   docId: string,
-  params: { anchor: Anchor; body: string; visibility?: Visibility },
+  params: { anchor: Anchor; body: string; visibility?: Visibility; color?: string },
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/documents/${docId}/human-annotations`, {
     method: "POST",
@@ -467,8 +477,26 @@ export async function deleteProvider(id: string): Promise<void> {
   if (!res.ok) await jsonOrThrow(res, "Failed to delete provider");
 }
 
-export async function updateComment(docId: string, id: string, body: string, version: number): Promise<void> {
-  await jsonOrThrow(await sendJson("PATCH", `/documents/${docId}/human-annotations/${id}`, { body, version }), "Failed to edit comment");
+export async function exportProvidersJson(): Promise<Blob> {
+  const res = await fetch(`${API_BASE}/admin/providers/export`, { credentials: "include", cache: "no-store" });
+  if (!res.ok) await jsonOrThrow(res, "Failed to export providers");
+  return res.blob();
+}
+
+export interface ProviderImportItem {
+  name: string;
+  baseUrl: string;
+  models: string[];
+  apiKey?: string | null;
+}
+
+export async function importProvidersJson(providers: ProviderImportItem[]): Promise<void> {
+  const res = await sendJson("POST", "/admin/providers/import", { providers });
+  if (!res.ok) await jsonOrThrow(res, "Failed to import providers");
+}
+
+export async function updateComment(docId: string, id: string, body: string, version: number, color?: string): Promise<void> {
+  await jsonOrThrow(await sendJson("PATCH", `/documents/${docId}/human-annotations/${id}`, { body, version, color }), "Failed to edit comment");
 }
 export async function deleteComment(docId: string, id: string, version: number): Promise<void> {
   const res = await fetch(`${API_BASE}/documents/${docId}/human-annotations/${id}?version=${version}`, { method: "DELETE", credentials: "include" });

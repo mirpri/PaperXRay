@@ -208,7 +208,7 @@ export function LensesPage() {
                     </button>)}
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-muted)", margin: "8px 0 0" }}>
-                    {LENS_COLORS.find(c => c.value === draft.color)?.name} · Used for labels, annotation cards and PDF highlights.
+                    {LENS_COLORS.find(c => c.value === draft.color)?.name} · Used for labels, annotation cards and PDF underlines.
                   </p>
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(200px, 100%), 1fr))", gap: 12 }}>

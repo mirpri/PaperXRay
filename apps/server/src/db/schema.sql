@@ -132,6 +132,7 @@ CREATE TABLE human_annotations (
   parent_kind VARCHAR(8)   NULL,
   thread_root_id CHAR(36)  NULL,
   thread_root_kind VARCHAR(8) NULL,
+  color       VARCHAR(7)   NULL,
   anchor      LONGTEXT     NOT NULL, -- JSON (MariaDB JSON is just LONGTEXT, docs/02-decisions.md #12)
   body        LONGTEXT     NOT NULL,
   visibility  VARCHAR(8)   NOT NULL DEFAULT 'org', -- private | org
@@ -324,3 +325,25 @@ CREATE TABLE vote_notifications (
   CONSTRAINT fk_vote_notifications_voter FOREIGN KEY (voter_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_vote_notifications_recipient FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB ROW_FORMAT=DYNAMIC DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE paper_subscriptions (
+  doc_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (doc_id, user_id),
+  KEY idx_paper_subscriptions_user (user_id),
+  FOREIGN KEY (doc_id) REFERENCES documents(id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE paper_comment_notifications (
+  id CHAR(36) NOT NULL PRIMARY KEY,
+  recipient_id CHAR(36) NOT NULL,
+  annotation_id CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  read_at DATETIME(3) NULL,
+  UNIQUE KEY uq_paper_comment_recipient (recipient_id, annotation_id),
+  KEY idx_paper_comment_inbox (recipient_id, read_at, created_at),
+  FOREIGN KEY (recipient_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (annotation_id) REFERENCES human_annotations(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

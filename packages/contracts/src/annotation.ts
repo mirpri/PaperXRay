@@ -8,6 +8,7 @@
 
 import type { Role } from "./user.js";
 import type { CharRange } from "./ir.js";
+import { sliceByCodePoints } from "./codepoints.js";
 
 /** Visibility of an annotation or an agent run (docs/02-decisions.md #5). Sharing granularity is the run, not the individual annotation. */
 export type Visibility = "private" | "org";
@@ -16,12 +17,18 @@ export type Severity = "info" | "low" | "medium" | "high";
 
 export interface Anchor {
   charRange: CharRange;
+  /** Exact selected spans when PDF reading order makes a selection discontinuous. charRange encloses them. */
+  charRanges?: CharRange[];
   /** A few characters of normalizedText immediately before charRange.start, captured at creation time so the anchor can be sanity-checked (or re-fuzzy-matched) if the parser version changes. */
   contextPrefix: string;
   /** Same, immediately after charRange.end. */
   contextSuffix: string;
-  /** IR Node this anchor falls within, for scope checks and grouping. */
+  /** First IR node touched by the anchor; the selection may span multiple nodes. */
   nodeId: string;
+}
+
+export function anchorText(text: string, anchor: Anchor): string {
+  return (anchor.charRanges ?? [anchor.charRange]).map(range => sliceByCodePoints(text, range.start, range.end)).join("\n…\n");
 }
 
 export interface AnnotationVotes {
@@ -31,6 +38,8 @@ export interface AnnotationVotes {
 }
 
 export interface HumanAnnotation {
+  /** User-selected underline color; legacy annotations use the default human blue. */
+  color?: string;
   /** AI answers participate in the same reply tree, with explicit provenance. */
   ai?: { providerName: string; model: string; status: "queued" | "running" | "succeeded" | "failed"; error: string | null };
   votes?: AnnotationVotes;

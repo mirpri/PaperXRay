@@ -1,9 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ModelProvider, ProviderDraft } from "@paper-xray/contracts";
-import { deleteProvider, fetchProviders, saveProvider } from "../api";
+import { deleteProvider, exportProvidersJson, fetchProviders, importProvidersJson, saveProvider, type ProviderImportItem } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { loadProviderKey, saveProviderKey } from "../personal/provider-keys";
 import { useToast } from "../ToastContext";
+
+const MAX_PROVIDERS_JSON_BYTES = 64 * 1024;
+
+function parseProvidersJson(text: string): ProviderImportItem[] {
+  let value: unknown;
+  try { value = JSON.parse(text.replace(/^\uFEFF/, "")); }
+  catch { throw new Error("Invalid JSON file."); }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Providers JSON must be an object with a 'providers' array.");
+  const obj = value as Record<string, unknown>;
+  if (!Array.isArray(obj.providers)) throw new Error("Providers JSON must contain a 'providers' array.");
+  return obj.providers.map((item: unknown, i: number) => {
+    if (!item || typeof item !== "object") throw new Error(`providers[${i}] must be an object.`);
+    const p = item as Record<string, unknown>;
+    if (typeof p.name !== "string" || !p.name.trim()) throw new Error(`providers[${i}].name must be a non-empty string.`);
+    if (typeof p.baseUrl !== "string" || !p.baseUrl.trim()) throw new Error(`providers[${i}].baseUrl must be a non-empty string.`);
+    if (!Array.isArray(p.models)) throw new Error(`providers[${i}].models must be an array.`);
+    for (let j = 0; j < p.models.length; j++) {
+      if (typeof p.models[j] !== "string") throw new Error(`providers[${i}].models[${j}] must be a string.`);
+    }
+    if (p.apiKey !== undefined && p.apiKey !== null && typeof p.apiKey !== "string") {
+      throw new Error(`providers[${i}].apiKey must be a string or null.`);
+    }
+    return {
+      name: p.name.trim(),
+      baseUrl: p.baseUrl.trim(),
+      models: p.models as string[],
+      apiKey: (p.apiKey as string | null | undefined) ?? null,
+    };
+  });
+}
 
 export function ProviderSettings() {
   const { user } = useAuth();
@@ -11,16 +41,62 @@ export function ProviderSettings() {
   const [providers, setProviders] = useState<ModelProvider[] | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [newOrg, setNewOrg] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   useEffect(() => { fetchProviders().then(setProviders).catch((err) => showToast(String(err), "error")); }, []);
   if (!user) return null;
   const current = providers?.find((p) => p.id === selected) ?? null;
   const org = current ? current.ownerId === null : newOrg;
   const readOnly = org && user.role !== "admin";
+
+  async function handleExport() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const blob = await exportProvidersJson();
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url; link.download = "providers.json";
+        document.body.appendChild(link); link.click(); link.remove();
+      } finally { window.setTimeout(() => URL.revokeObjectURL(url), 1000); }
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
+    finally { setBusy(false); }
+  }
+
+  async function handleImport(file: File) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      if (file.size > MAX_PROVIDERS_JSON_BYTES) throw new Error("Providers JSON must be 64 KB or smaller.");
+      const items = parseProvidersJson(await file.text());
+      if (items.length === 0) { showToast("No providers found in JSON file.", "error"); return; }
+      if (!window.confirm(`Import ${items.length} provider(s)? This will replace all existing organization providers.`)) return;
+      await importProvidersJson(items);
+      const refreshed = await fetchProviders();
+      setProviders(refreshed);
+      setSelected(null);
+      setNewOrg(false);
+      showToast(`Imported ${items.length} provider(s).`);
+    } catch (err) { showToast(err instanceof Error ? err.message : String(err), "error"); }
+    finally { setBusy(false); }
+  }
+
   function saved(provider: ModelProvider) {
     setProviders((items) => [...(items ?? []).filter((p) => p.id !== provider.id), provider]); setSelected(provider.id);
   }
   return <section>
-    <h2 className="pxr-section-title">MODEL PROVIDERS</h2>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+      <h2 className="pxr-section-title" style={{ margin: 0 }}>MODEL PROVIDERS</h2>
+      {user.role === "admin" && <div style={{ display: "flex", gap: 6 }}>
+        <input ref={fileInput} type="file" accept=".json,application/json" hidden aria-label="Import providers JSON" onChange={e => {
+          const file = e.currentTarget.files?.[0]; e.currentTarget.value = "";
+          if (file) void handleImport(file);
+        }} />
+        <button type="button" className="pxr-btn" disabled={busy} onClick={() => fileInput.current?.click()}>Import JSON</button>
+        <button type="button" className="pxr-btn" disabled={busy} onClick={() => void handleExport()}>Export JSON</button>
+      </div>}
+    </div>
     <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
       Set up providers here, then select a provider and model on the Lenses page. Organization keys stay on the server;
       personal keys stay in this browser, scoped to your account. Personal endpoints must allow this site's origin (CORS).

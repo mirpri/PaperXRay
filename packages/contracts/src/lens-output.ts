@@ -38,6 +38,7 @@ Respond with ONLY a JSON object (no markdown fences, no commentary) of this exac
 
 Rules:
 - evidenceText MUST be an exact, verbatim substring copied character-for-character from the paper text given in the next message — it is used to programmatically locate the span in the source; paraphrasing, truncating, or fixing typos in it will cause the annotation to be silently discarded.
+- Evidence may span multiple paragraphs, regions, columns, or pages. Include the full supporting passage, preserving its line breaks; do not shorten it just to fit inside one region.
 - confidence is your own 0.0-1.0 estimate that this is a genuine, worthwhile issue.
 - Produce at most ${spec.maxAnnotations} annotations. Return fewer, or an empty array, if you don't find that many genuine issues — do not pad with weak or repetitive observations.
 - Each comment: 1-2 sentences, self-contained, in English.`;

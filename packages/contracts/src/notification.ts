@@ -1,6 +1,6 @@
 export interface AnnotationNotification {
   id: string;
-  kind: "reply" | "upvote" | "downvote" | "cancel_upvote" | "cancel_downvote" | "collection_shared" | "collection_left" | "membership_requested";
+  kind: "reply" | "upvote" | "downvote" | "cancel_upvote" | "cancel_downvote" | "collection_shared" | "collection_left" | "membership_requested" | "paper_comment";
   actorId: string;
   actorName: string;
   docId: string | null;

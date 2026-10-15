@@ -7,7 +7,7 @@ const columns = "id, owner_id, name, base_url, models, (api_key IS NOT NULL AND 
 function toProvider(row: RowDataPacket): ModelProvider {
   return { id: row.id, ownerId: row.owner_id, name: row.name, baseUrl: row.base_url, models: JSON.parse(row.models), hasApiKey: Boolean(row.has_api_key) };
 }
-export async function listProviders(userId: string): Promise<ModelProvider[]> {
+export async function listProviders(userId: string | null): Promise<ModelProvider[]> {
   const [rows] = await pool.query<RowDataPacket[]>(`SELECT ${columns} FROM providers WHERE deleted_at IS NULL AND (owner_id IS NULL OR owner_id = ?) ORDER BY owner_id IS NOT NULL, name`, [userId]);
   return rows.map(toProvider);
 }

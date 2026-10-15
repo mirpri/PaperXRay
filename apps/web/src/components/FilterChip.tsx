@@ -42,7 +42,7 @@ export function FilterChip({ label, count, active, ready, loading, loadingLabel,
         }}
       >
         {color && <span aria-hidden="true" style={{ display: "inline-block", width: 7, height: 7, borderRadius: "50%", background: color, marginRight: 6 }} />}
-        {loading ? `${text}${loadingLabel ? ` · ${loadingLabel}` : ""} …` : error ? `${text} · failed` : ready ? `${text} ${count}` : `${text} · run`}
+        {loading ? `${text}${loadingLabel ? ` · ${loadingLabel}` : ""}` : error ? `${text} · failed` : ready ? `${text} ${count}` : `${text} · run`}
       </button>
       {onRerun && (
         <button

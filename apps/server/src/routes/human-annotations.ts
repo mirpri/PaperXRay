@@ -1,5 +1,6 @@
 import { Router, type Router as RouterType } from "express";
-import type { Anchor, Visibility } from "@paper-xray/contracts";
+import type { Anchor, CharRange, Visibility } from "@paper-xray/contracts";
+import { codePointLength, isLensColor } from "@paper-xray/contracts";
 import {
   findDocumentById,
   findAgentAnnotationById,
@@ -13,6 +14,7 @@ import { findNotificationRecipient } from "../db/notifications.js";
 import { broadcastAnnotationsChanged, broadcastNotificationsChanged } from "../realtime/socket.js";
 import { visibleRoot } from "../discussion/access.js";
 import { cancelAiReply } from "../lenses/ai-replies.js";
+import { findPaperCommentRecipients } from "../db/paper-subscriptions.js";
 
 export const humanAnnotationsRouter: RouterType = Router();
 
@@ -23,18 +25,27 @@ function validVersion(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 
+function validRange(value: unknown): value is CharRange {
+  if (!value || typeof value !== "object") return false;
+  const range = value as CharRange;
+  return Number.isInteger(range.start) && Number.isInteger(range.end) && range.start >= 0 && range.end > range.start;
+}
+
 function isValidAnchor(value: unknown): value is Anchor {
   if (typeof value !== "object" || value === null) return false;
   const a = value as Record<string, unknown>;
-  return (
+  const valid = (
     typeof a.nodeId === "string" &&
     typeof a.contextPrefix === "string" &&
     typeof a.contextSuffix === "string" &&
-    typeof a.charRange === "object" &&
-    a.charRange !== null &&
-    typeof (a.charRange as Record<string, unknown>).start === "number" &&
-    typeof (a.charRange as Record<string, unknown>).end === "number"
+    validRange(a.charRange)
   );
+  if (!valid) return false;
+  if (a.charRanges === undefined) return true;
+  const enclosing = a.charRange as CharRange;
+  return Array.isArray(a.charRanges) && a.charRanges.length > 0 && a.charRanges.length <= 2000 &&
+    a.charRanges.every((range, index, ranges) => validRange(range) && range.start >= enclosing.start && range.end <= enclosing.end &&
+      (index === 0 || range.start >= ranges[index - 1].end));
 }
 
 humanAnnotationsRouter.post("/documents/:docId/human-annotations", requireAuth, async (req, res, next) => {
@@ -45,18 +56,27 @@ humanAnnotationsRouter.post("/documents/:docId/human-annotations", requireAuth, 
       return;
     }
 
-    const { anchor, body, visibility } = req.body as {
+    const { anchor, body, visibility, color } = req.body as {
       anchor?: unknown;
       body?: unknown;
       visibility?: Visibility;
+      color?: unknown;
     };
 
     if (!isValidAnchor(anchor) || !validBody(body)) {
       res.status(400).json({ error: "anchor and a non-empty body are required" });
       return;
     }
+    if (anchor.charRange.end > codePointLength(document.normalizedText)) {
+      res.status(400).json({ error: "Selection falls outside the document text" });
+      return;
+    }
     if (visibility !== undefined && visibility !== "private" && visibility !== "org") {
       res.status(400).json({ error: "visibility must be 'private' or 'org'" });
+      return;
+    }
+    if (color !== undefined && !isLensColor(color)) {
+      res.status(400).json({ error: "Choose a preset annotation color" });
       return;
     }
 
@@ -68,6 +88,7 @@ humanAnnotationsRouter.post("/documents/:docId/human-annotations", requireAuth, 
       anchor,
       body: body.trim(),
       visibility: visibility ?? "org",
+      color,
     });
 
     broadcastAnnotationsChanged(req.params.docId);
@@ -79,9 +100,13 @@ humanAnnotationsRouter.post("/documents/:docId/human-annotations", requireAuth, 
 
 humanAnnotationsRouter.patch("/documents/:docId/human-annotations/:id", requireAuth, async (req, res, next) => {
   try {
-    const { body, version } = req.body as { body?: unknown; version?: unknown };
+    const { body, version, color } = req.body as { body?: unknown; version?: unknown; color?: unknown };
     if (!validBody(body) || !validVersion(version)) {
       res.status(400).json({ error: "body (non-empty string) and version (number) are required" });
+      return;
+    }
+    if (color !== undefined && !isLensColor(color)) {
+      res.status(400).json({ error: "Choose a preset annotation color" });
       return;
     }
 
@@ -97,7 +122,7 @@ humanAnnotationsRouter.patch("/documents/:docId/human-annotations/:id", requireA
       return;
     }
 
-    const result = await updateHumanAnnotationBody(req.params.id, version, body.trim());
+    const result = await updateHumanAnnotationBody(req.params.id, version, body.trim(), color);
     if (!result.ok) {
       res.status(409).json({ error: "This annotation was already modified", current: result.current });
       return;
@@ -106,6 +131,7 @@ humanAnnotationsRouter.patch("/documents/:docId/human-annotations/:id", requireA
     broadcastAnnotationsChanged(req.params.docId);
     if (existing.authorId) broadcastNotificationsChanged(existing.authorId);
     if (existing.parentId) { const recipient = await findNotificationRecipient(existing.id); if (recipient) broadcastNotificationsChanged(recipient); }
+    for (const recipient of await findPaperCommentRecipients(existing.id)) broadcastNotificationsChanged(recipient);
     res.json({ annotation: result.current });
   } catch (err) {
     next(err);
@@ -141,6 +167,7 @@ humanAnnotationsRouter.delete("/documents/:docId/human-annotations/:id", require
     broadcastAnnotationsChanged(req.params.docId);
     if (existing.authorId) broadcastNotificationsChanged(existing.authorId);
     if (existing.parentId) { const recipient = await findNotificationRecipient(existing.id); if (recipient) broadcastNotificationsChanged(recipient); }
+    for (const recipient of await findPaperCommentRecipients(existing.id)) broadcastNotificationsChanged(recipient);
     res.status(204).end();
   } catch (err) {
     next(err);

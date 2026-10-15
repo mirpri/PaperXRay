@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Reply, Pencil, Trash2, ThumbsUp, ThumbsDown, Lock, Unlock, Sparkles } from "lucide-react";
 import type { Annotation, HumanAnnotation, Role, Visibility } from "@paper-xray/contracts";
+import { humanAnnotationColor } from "@paper-xray/contracts";
 import { deleteComment, replyToComment, updateComment, voteOnAnnotation } from "../api";
 import { canDeleteComment } from "./comment-threads";
 import { UserIdentity } from "./UserIdentity";
 import { useToast } from "../ToastContext";
 import { AiReplyComposer } from "./AiReplyComposer";
 import { CommentText } from "./CommentText";
+import { AnnotationColorPicker } from "./AnnotationColorPicker";
 
 type Props = {
   annotation: Annotation;
@@ -52,6 +54,8 @@ function CommentRow({ annotation, userId, role, onChanged, depth, rootHeader, ro
   const generating = human?.ai?.status === "queued" || human?.ai?.status === "running";
   const [draft, setDraft] = useState("");
   const [initialDraft, setInitialDraft] = useState("");
+  const [draftColor, setDraftColor] = useState(humanAnnotationColor(human?.color));
+  const [initialColor, setInitialColor] = useState(draftColor);
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [votes, setVotes] = useState(annotation.votes ?? { upvotes: 0, downvotes: 0, myVote: 0 });
@@ -73,13 +77,15 @@ function CommentRow({ annotation, userId, role, onChanged, depth, rootHeader, ro
   function open(next: "edit" | "reply" | "delete" | "ai") {
     const initial = next === "edit" ? human!.body : "";
     setMode(next); setDraft(initial); setInitialDraft(initial);
+    const color = humanAnnotationColor(human?.color);
+    setDraftColor(color); setInitialColor(color);
     setVersion(human?.version ?? 0);
   }
   async function submit() {
     if (!mode || mode === "ai" || busy) return;
     setBusy(true);
     try {
-      if (mode === "edit") await updateComment(annotation.docId, annotation.id, draft.trim(), version);
+      if (mode === "edit") await updateComment(annotation.docId, annotation.id, draft.trim(), version, human && !human.parentId && draftColor !== initialColor ? draftColor : undefined);
       else if (mode === "delete") await deleteComment(annotation.docId, annotation.id, version);
       else await replyToComment(annotation.docId, annotation.id, human ? "human" : "agent", draft.trim());
       setMode(null); setDraft(""); onChanged();
@@ -145,7 +151,7 @@ function CommentRow({ annotation, userId, role, onChanged, depth, rootHeader, ro
       aria-busy={busy}
       onClick={(e) => e.stopPropagation()}
       onBlur={e => {
-        if (!busy && mode !== "delete" && draft === initialDraft && !e.currentTarget.contains(e.relatedTarget)) {
+        if (!busy && mode !== "delete" && draft === initialDraft && draftColor === initialColor && !e.currentTarget.contains(e.relatedTarget)) {
           setMode(null);
         }
       }}
@@ -164,6 +170,7 @@ function CommentRow({ annotation, userId, role, onChanged, depth, rootHeader, ro
           }}
         />
       </>}
+      {mode === "edit" && human && !human.parentId && <AnnotationColorPicker value={draftColor} onChange={setDraftColor} disabled={busy} />}
       <div className="pxr-comment-editor-footer">
         <div className="pxr-comment-editor-buttons">
           <button className="pxr-btn" type="button" disabled={busy} onClick={() => { setMode(null); }}>Cancel</button>

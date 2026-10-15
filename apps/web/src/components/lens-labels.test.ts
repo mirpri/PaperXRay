@@ -5,6 +5,7 @@ import type { AgentAnnotation } from "@paper-xray/contracts";
 import { annotationLensLabel, readerLensLabels } from "./lens-labels";
 import { AnnotationCard } from "./AnnotationCard";
 import { FilterChip } from "./FilterChip";
+import { ToastProvider } from "../ToastContext";
 const annotation: AgentAnnotation = {
  id: "annotation", docId: "doc", agentId: "personal-lens-opaque-id", lensName: "方法论审查", ownerId: "alice", ownerName: "小明",
  agentVersion: "1", runId: "run", anchor: { nodeId: "node", charRange: { start: 0, end: 1 }, contextPrefix: "", contextSuffix: "" },
@@ -14,7 +15,7 @@ it("labels a shared personal Lens with its configured name and owner nickname", 
  const labels = readerLensLabels([annotation], [], "bob");
  expect(labels.get(annotation.agentId)).toBe("方法论审查 (小明)");
  const chip = renderToStaticMarkup(createElement(FilterChip, { label: labels.get(annotation.agentId)!, count: 1, ready: true, loading: false, active: true, onClick() {} }));
- const card = renderToStaticMarkup(createElement(AnnotationCard, { annotation, normalizedText: "x", active: false, onJumpTo() {}, currentUserId: "bob", repliesByParent: new Map(), onCommentsChanged() {} }));
+ const card = renderToStaticMarkup(createElement(ToastProvider, { children: createElement(AnnotationCard, { annotation, normalizedText: "x", active: false, onJumpTo() {}, currentUserId: "bob", repliesByParent: new Map(), onCommentsChanged() {} }) }));
  for (const html of [chip, card]) { expect(html).toContain("方法论审查 (小明)"); expect(html).not.toContain(annotation.agentId); }
 });
 it("keeps own Lens and organization Lens labels without a foreign owner suffix", () => {

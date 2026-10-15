@@ -23,11 +23,14 @@ import { seedSsoClientIdIfBlank, seedSsoClientSecretIfBlank } from "./db/reposit
 import { seedPresetLenses } from "./db/lens-repository.js";
 import { PRESET_LENSES } from "./lenses/presets.js";
 import { pool } from "./db/pool.js";
+import { ensureHumanAnnotationColors } from "./db/human-annotation-colors.js";
 import { isDatabaseUnavailable } from "./db/errors.js";
 import { LENS_RUN_STATE_SCHEMA } from "./db/lens-run-state.js";
 import { startLensRunWorker } from "./lenses/background-runs.js";
 import { AI_REPLIES_SCHEMA, startAiReplyWorker } from "./lenses/ai-replies.js";
 import { aiRepliesRouter } from "./routes/ai-replies.js";
+import { paperSubscriptionsRouter } from "./routes/paper-subscriptions.js";
+import { PAPER_SUBSCRIPTIONS_SCHEMA, PAPER_COMMENT_NOTIFICATIONS_SCHEMA } from "./db/paper-subscriptions.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,6 +47,7 @@ app.use("/api", documentTitlesRouter);
 app.use("/api", collectionsRouter);
 app.use("/api", humanAnnotationsRouter);
 app.use("/api", aiRepliesRouter);
+app.use("/api", paperSubscriptionsRouter);
 app.use("/api", authRouter);
 app.use("/api", adminRouter);
 app.use("/api", lensesRouter);
@@ -81,6 +85,9 @@ await seedSsoClientSecretIfBlank(config.sso.mirpassClientSecret);
 await seedPresetLenses(PRESET_LENSES);
 await pool.query(LENS_RUN_STATE_SCHEMA);
 await pool.query(AI_REPLIES_SCHEMA);
+await ensureHumanAnnotationColors();
+await pool.query(PAPER_SUBSCRIPTIONS_SCHEMA);
+await pool.query(PAPER_COMMENT_NOTIFICATIONS_SCHEMA);
 startLensRunWorker();
 startAiReplyWorker();
 

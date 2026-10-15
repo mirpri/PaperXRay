@@ -16,8 +16,10 @@ import type {
   User,
   Visibility,
 } from "@paper-xray/contracts";
-import { lensColor, DEFAULT_DOCUMENT_QUERY } from "@paper-xray/contracts";
+import { lensColor, DEFAULT_DOCUMENT_QUERY, humanAnnotationColor } from "@paper-xray/contracts";
 import { pool } from "./pool.js";
+import { notifyPaperSubscribers } from "./paper-subscriptions.js";
+import { broadcastNotificationsChanged } from "../realtime/socket.js";
 import { readCharMap, readNormalizedText, writeDocumentContent } from "../storage/document-files.js";
 
 interface DocumentRow extends RowDataPacket {
@@ -759,6 +761,7 @@ export async function updateSsoConfig(params: {
 }
 
 interface HumanAnnotationRow extends RowDataPacket {
+  color: string | null;
   ai_provider_name?: string | null;
   ai_model?: string | null;
   ai_status?: NonNullable<HumanAnnotation["ai"]>["status"] | null;
@@ -784,6 +787,7 @@ interface HumanAnnotationRow extends RowDataPacket {
 function toHumanAnnotation(row: HumanAnnotationRow): HumanAnnotation {
   return {
     id: row.id, docId: row.doc_id, authorId: row.author_id,
+    color: humanAnnotationColor(row.color),
     authorName: row.author_name ?? "Deleted user", authorRole: row.author_role ?? undefined,
     parentId: row.parent_id, parentKind: row.parent_kind,
     threadRootId: row.thread_root_id, threadRootKind: row.thread_root_kind,
@@ -833,28 +837,33 @@ export async function listHumanAnnotationsForDoc(docId: string, viewerId: string
 
 export async function insertHumanAnnotation(params: {
   docId: string; authorId: string; anchor: Anchor; body: string; visibility: Visibility;
+  color?: string;
   parentId?: string; parentKind?: "human" | "agent";
   threadRootId?: string; threadRootKind?: "human" | "agent";
   notifyRecipientId?: string;
 }): Promise<HumanAnnotation> {
   const id = uuid();
   const sql =
-    `INSERT INTO human_annotations (id, doc_id, author_id, anchor, body, visibility, version, parent_id, parent_kind, thread_root_id, thread_root_kind)
-     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`;
+    `INSERT INTO human_annotations (id, doc_id, author_id, anchor, body, visibility, version, parent_id, parent_kind, thread_root_id, thread_root_kind, color)
+     VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`;
   const values = [id, params.docId, params.authorId, JSON.stringify(params.anchor), params.body, params.visibility,
-      params.parentId ?? null, params.parentKind ?? null, params.threadRootId ?? null, params.threadRootKind ?? null];
+      params.parentId ?? null, params.parentKind ?? null, params.threadRootId ?? null, params.threadRootKind ?? null, humanAnnotationColor(params.color)];
 
-  if (params.notifyRecipientId && params.notifyRecipientId !== params.authorId && params.parentId) {
+  const recipients: string[] = [];
+  {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       await conn.query(sql, values);
-      await conn.query("INSERT INTO notifications (id, recipient_id, actor_id, doc_id, reply_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
-        [uuid(), params.notifyRecipientId, params.authorId, params.docId, id, params.parentId]);
+      const replyRecipient = params.notifyRecipientId && params.notifyRecipientId !== params.authorId && params.parentId ? params.notifyRecipientId : undefined;
+      if (replyRecipient) await conn.query("INSERT INTO notifications (id, recipient_id, actor_id, doc_id, reply_id, parent_id) VALUES (?, ?, ?, ?, ?, ?)",
+        [uuid(), replyRecipient, params.authorId, params.docId, id, params.parentId]);
+      recipients.push(...await notifyPaperSubscribers(conn, id, replyRecipient));
       await conn.commit();
     } catch (err) { await conn.rollback(); throw err; }
     finally { conn.release(); }
-  } else await pool.query(sql, values);
+  }
+  for (const recipient of recipients) broadcastNotificationsChanged(recipient);
   const created = await findHumanAnnotationById(id);
   if (!created) throw new Error("Failed to read back newly-inserted human annotation");
   return created;
@@ -874,10 +883,11 @@ export async function updateHumanAnnotationBody(
   id: string,
   expectedVersion: number,
   newBody: string,
+  color?: string,
 ): Promise<OptimisticLockResult> {
   const [result] = await pool.query<ResultSetHeader>(
-    "UPDATE human_annotations SET body = ?, version = version + 1 WHERE id = ? AND version = ? AND deleted_at IS NULL",
-    [newBody, id, expectedVersion],
+    "UPDATE human_annotations SET body = ?, color = COALESCE(?, color), version = version + 1 WHERE id = ? AND version = ? AND deleted_at IS NULL",
+    [newBody, color === undefined ? null : humanAnnotationColor(color), id, expectedVersion],
   );
   const current = await findHumanAnnotationById(id);
   if (result.affectedRows === 0) {

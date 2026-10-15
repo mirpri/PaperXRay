@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LensSpec, Node as IrNode } from "@paper-xray/contracts";
 import { callChatModel } from "./model-client.js";
-import { runModelLens } from "./run-model-lens.js";
+import { lensItemsToCandidates, runModelLens } from "./run-model-lens.js";
+import { verifyAndFilterAgentAnnotations } from "../evidence/apply-verification.js";
 
 vi.mock("./model-client.js", () => ({ callChatModel: vi.fn() }));
 
@@ -33,6 +34,20 @@ const NODE: IrNode = {
 };
 
 describe("runModelLens", () => {
+  it("retains the complete cross-paragraph quote even with strict paragraph scope", () => {
+    const text = "First paragraph.\n\nSecond paragraph.";
+    const nodes: IrNode[] = [
+      { ...NODE, charRange: { start: 0, end: 16 } },
+      { ...NODE, id: "n2", order: 1, charRange: { start: 18, end: text.length } },
+    ];
+    const candidates = lensItemsToCandidates({ items: [{ evidenceText: text, comment: "Compare both paragraphs.", severity: "medium", confidence: 0.8 }],
+      spec: SPEC, docId: "doc1", normalizedText: text, nodes, ownerId: null });
+    const result = verifyAndFilterAgentAnnotations({ candidates, normalizedText: text, nodes, scope: "paragraph", strictScope: true });
+    expect(result).toHaveLength(1);
+    expect(result[0].anchor.charRange).toEqual({ start: 0, end: text.length });
+    expect(result[0].confidence).toBe(0.8);
+  });
+
   it("converts a valid model response into an anchored, evidence-backed AgentAnnotation", async () => {
     vi.mocked(callChatModel).mockResolvedValue(
       JSON.stringify({

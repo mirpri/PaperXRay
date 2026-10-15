@@ -1,4 +1,4 @@
-/** Shared preset palette: saturated enough for labels, translucent in PDF highlights. */
+/** Shared preset palette for annotation labels and PDF underlines. */
 export const LENS_COLORS = [
   { name: "Ocean", value: "#3B6CB7" },
   { name: "Teal", value: "#168575" },
@@ -13,6 +13,13 @@ export const LENS_COLORS = [
   { name: "Lagoon", value: "#287F9A" },
   { name: "Slate", value: "#64748B" },
 ] as const;
+export const DEFAULT_HUMAN_COLOR = "#40628C";
+export function isAnnotationColor(value: unknown): value is string {
+  return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+}
+export function humanAnnotationColor(value?: string | null): string {
+  return isAnnotationColor(value) ? value.toUpperCase() : DEFAULT_HUMAN_COLOR;
+}
 export function isLensColor(value: unknown): value is string {
   return typeof value === "string" && LENS_COLORS.some(c => c.value === value.toUpperCase());
 }

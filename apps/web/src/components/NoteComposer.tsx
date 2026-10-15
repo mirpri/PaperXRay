@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { usePdfHighlighterContext } from "react-pdf-highlighter-extended";
+import type { PdfRect } from "../anchoring/reverse-map";
+import { LENS_COLORS } from "@paper-xray/contracts";
+import { AnnotationColorPicker } from "./AnnotationColorPicker";
 
 export interface SelectionPosition {
   page: number;
   x: number;
   y: number;
+  rects?: PdfRect[];
 }
 
 /**
@@ -16,9 +20,10 @@ export interface SelectionPosition {
  * (no "click to expand" step) styled with our own design tokens rather than
  * the library's default.
  */
-export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteText: string, position?: SelectionPosition) => void }) {
-  const { getCurrentSelection, getViewer, removeGhostHighlight, setTip } = usePdfHighlighterContext();
+export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteText: string, position?: SelectionPosition, color?: string) => void }) {
+  const { getCurrentSelection, getGhostHighlight, getViewer, removeGhostHighlight, setTip } = usePdfHighlighterContext();
   const [text, setText] = useState("");
+  const [color, setColor] = useState<string>(LENS_COLORS[0].value);
 
   function close() {
     removeGhostHighlight();
@@ -27,7 +32,7 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
   }
 
   function confirm() {
-    const selection = getCurrentSelection();
+    const selection = getCurrentSelection() ?? getGhostHighlight();
     const trimmed = text.trim();
     if (!selection?.content.text || !trimmed) return;
 
@@ -35,6 +40,19 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
     // Use the first text rect so multi-line selections anchor at their start.
     let position: SelectionPosition | undefined;
     if (selection.position?.boundingRect) {
+      const rects: PdfRect[] = [];
+      for (const selected of selection.position.rects) {
+        if (selection.position.usePdfCoordinates) {
+          rects.push({ page: selected.pageNumber, x: Math.min(selected.x1, selected.x2), y: Math.min(selected.y1, selected.y2),
+            width: Math.abs(selected.x2 - selected.x1), height: Math.abs(selected.y2 - selected.y1) });
+        } else {
+          const viewport = getViewer()?.getPageView(selected.pageNumber - 1)?.viewport;
+          if (!viewport) continue;
+          const [x1, y1] = viewport.convertToPdfPoint(selected.x1 / selected.width * viewport.width, selected.y1 / selected.height * viewport.height);
+          const [x2, y2] = viewport.convertToPdfPoint(selected.x2 / selected.width * viewport.width, selected.y2 / selected.height * viewport.height);
+          rects.push({ page: selected.pageNumber, x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) });
+        }
+      }
       const rect = selection.position.rects[0] ?? selection.position.boundingRect;
       if (selection.position.usePdfCoordinates) {
         position = { page: rect.pageNumber, x: rect.x1, y: (rect.y1 + rect.y2) / 2 };
@@ -48,9 +66,10 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
           position = { page: rect.pageNumber, x, y };
         }
       }
+      if (position) position.rects = rects;
     }
 
-    onSave(selection.content.text, trimmed, position);
+    onSave(selection.content.text, trimmed, position, color);
     close();
   }
 
@@ -61,7 +80,7 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
         confirm();
       }}
       style={{
-        width: 260,
+        width: 280,
         background: "var(--surface)",
         border: "1px solid var(--border-strong)",
         borderRadius: 4,
@@ -91,6 +110,7 @@ export function NoteComposer({ onSave }: { onSave: (selectedText: string, noteTe
           padding: 7,
         }}
       />
+      <AnnotationColorPicker value={color} onChange={setColor} />
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
         <button
           type="button"

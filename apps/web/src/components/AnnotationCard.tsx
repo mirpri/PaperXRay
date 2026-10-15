@@ -1,5 +1,5 @@
 import type { Annotation, HumanAnnotation, Role, Visibility } from "@paper-xray/contracts";
-import { isAgentAnnotation, sliceByCodePoints, lensColor } from "@paper-xray/contracts";
+import { isAgentAnnotation, anchorText, lensColor, humanAnnotationColor } from "@paper-xray/contracts";
 import { AnnotationDiscussion } from "./AnnotationDiscussion";
 import { annotationLensLabel } from "./lens-labels";
 import { UserIdentity } from "./UserIdentity";
@@ -38,7 +38,7 @@ export function AnnotationCard({
   onJumpTo: (annotationId: string) => void;
 }) {
   const agent = isAgentAnnotation(annotation);
-  const color = agent ? lensColor(annotation.agentId, configuredColor ?? annotation.lensColor) : "var(--human)";
+  const color = agent ? lensColor(annotation.agentId, configuredColor ?? annotation.lensColor) : humanAnnotationColor(annotation.color);
   const ownRun = agent && annotation.ownerId !== null && annotation.ownerId === currentUserId;
 
   const header = (
@@ -87,6 +87,7 @@ export function AnnotationCard({
               PRIVATE
             </span>
           )}
+          <span aria-hidden="true" style={{ width: 10, height: 10, borderRadius: "50%", background: color, flexShrink: 0 }} />
         </div>
       )
   );
@@ -111,7 +112,7 @@ export function AnnotationCard({
           {agent ? "EVIDENCE" : "QUOTE"}
         </span>
         <span style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: 12, lineHeight: 1.6, color: "#4A4A4A" }}>
-          {sliceByCodePoints(normalizedText, annotation.anchor.charRange.start, annotation.anchor.charRange.end)}
+          {anchorText(normalizedText, annotation.anchor)}
         </span>
         {agent && (
           <span className="mono" style={{ fontSize: 9, color: "var(--text-soft)" }}>

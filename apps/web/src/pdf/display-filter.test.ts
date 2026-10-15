@@ -53,6 +53,21 @@ describe("applyDisplayFilter", () => {
     expect(result.visible.map((a) => a.id)).toEqual(["b"]);
     expect(result.hiddenByGroup).toBe(2);
   });
+
+  it("filters comment authors independently", () => {
+    const result = applyDisplayFilter([human("alice"), { ...human("bob"), authorId: "bob" }, agent("lens", "L", 1)], {
+      hiddenGroups: ["human:u"],
+    }, "u");
+    expect(result.visible.map(a => a.id)).toEqual(["bob", "lens"]);
+  });
+
+  it("keeps shared runs separate from own Lens runs and other shared runs", () => {
+    const own = { ...agent("own", "L", 1), ownerId: "me", runId: "own-run" };
+    const shared = { ...agent("shared", "L", 1), ownerId: "alice", runId: "shared-run" };
+    const other = { ...shared, id: "other", runId: "other-run" };
+    expect(applyDisplayFilter([own, shared, other], { hiddenGroups: ["run:shared-run"] }, "me").visible).toEqual([own, other]);
+    expect(applyDisplayFilter([own, shared, other], { hiddenGroups: ["L"] }, "me").visible).toEqual([shared, other]);
+  });
 });
 
 describe("pageDensity", () => {

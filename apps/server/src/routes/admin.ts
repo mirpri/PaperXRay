@@ -3,6 +3,8 @@ import { requireRole } from "../auth/middleware.js";
 import type { Role } from "@paper-xray/contracts";
 import { approveMembership, deleteUserAccount, getSsoConfig, getSsoConfigPublic, getUserDeletionPreview, listUsers, setUserRole, updateSsoConfig } from "../db/repositories.js";
 import { broadcastNotificationsChanged, disconnectDeletedUser } from "../realtime/socket.js";
+import { listProviders, saveProvider, ProviderConflict } from "../db/providers.js";
+import { validateProvider } from "../lenses/validate-provider.js";
 
 
 const ROLES: readonly Role[] = ["admin", "curator", "member"];
@@ -156,6 +158,91 @@ adminRouter.patch("/admin/users/:id/role", requireRole("admin"), async (req, res
       return;
     }
     res.json({ user: result.user });
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Export all organization providers (including API keys) for backup/transfer. */
+adminRouter.get("/admin/providers/export", requireRole("admin"), async (_req, res, next) => {
+  try {
+    const all = await listProviders(null);
+    const orgProviders = all.filter((p) => p.ownerId === null);
+    // Fetch raw API keys for export
+    const { pool } = await import("../db/pool.js");
+    const ids = orgProviders.map((p) => p.id);
+    if (ids.length === 0) {
+      res.set("Cache-Control", "no-store")
+        .set("Content-Disposition", 'attachment; filename="providers.json"')
+        .type("application/json")
+        .send(JSON.stringify({ providers: [] }, null, 2) + "\n");
+      return;
+    }
+    const [rows] = await pool.query<any[]>(
+      `SELECT id, api_key FROM providers WHERE id IN (?) AND deleted_at IS NULL`,
+      [ids]
+    );
+    const keyMap = new Map(rows.map((r) => [r.id, r.api_key ?? null]));
+    const exportData = orgProviders.map((p) => ({
+      name: p.name,
+      baseUrl: p.baseUrl,
+      models: p.models,
+      apiKey: keyMap.get(p.id) ?? null,
+    }));
+    res.set("Cache-Control", "no-store")
+      .set("Content-Disposition", 'attachment; filename="providers.json"')
+      .type("application/json")
+      .send(JSON.stringify({ providers: exportData }, null, 2) + "\n");
+  } catch (err) {
+    next(err);
+  }
+});
+
+/** Import organization providers (replaces existing org providers). */
+adminRouter.post("/admin/providers/import", requireRole("admin"), async (req, res, next) => {
+  try {
+    const { providers } = req.body as { providers?: unknown };
+    if (!Array.isArray(providers)) {
+      res.status(400).json({ error: "providers must be an array" });
+      return;
+    }
+    // Validate all items first
+    const drafts: Array<{ name: string; baseUrl: string; models: string[]; apiKey?: string | null }> = [];
+    for (let i = 0; i < providers.length; i++) {
+      const item = providers[i];
+      if (!item || typeof item !== "object") {
+        res.status(400).json({ error: `providers[${i}] must be an object` });
+        return;
+      }
+      const result = validateProvider({ ...item, org: true });
+      if (!result.ok) {
+        res.status(400).json({ error: `providers[${i}]: ${result.error}` });
+        return;
+      }
+      drafts.push({ ...result.draft, apiKey: item.apiKey ?? null });
+    }
+    // Delete existing org providers
+    const existing = await listProviders(null);
+    const orgExisting = existing.filter((p) => p.ownerId === null);
+    for (const p of orgExisting) {
+      try {
+        const { deleteProvider } = await import("../db/providers.js");
+        await deleteProvider(p.id);
+      } catch (err) {
+        if (err instanceof ProviderConflict) {
+          res.status(409).json({ error: `Cannot delete provider "${p.name}": ${err.message}` });
+          return;
+        }
+        throw err;
+      }
+    }
+    // Save new providers
+    const saved = [];
+    for (const draft of drafts) {
+      const provider = await saveProvider(null, null, draft);
+      saved.push(provider);
+    }
+    res.json({ providers: saved });
   } catch (err) {
     next(err);
   }

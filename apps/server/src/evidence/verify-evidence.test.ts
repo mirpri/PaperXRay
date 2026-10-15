@@ -107,4 +107,17 @@ describe("verifyEvidence", () => {
     });
     expect(result.semanticMatch).toBeNull();
   });
+
+  it("allows evidence across multiple scope regions separated by whitespace", () => {
+    const result = verifyEvidence({ normalizedText: "first\n\nsecond", evidenceSpan: { start: 0, end: 13 }, scope: "paragraph",
+      nodes: [paragraphNode({ charRange: { start: 0, end: 5 } }), paragraphNode({ id: "next", charRange: { start: 7, end: 13 } })] });
+    expect(result.passed).toBe(true);
+  });
+
+  it("does not allow unscoped content between matching regions", () => {
+    const result = verifyEvidence({ normalizedText: "first OTHER second", evidenceSpan: { start: 0, end: 18 }, scope: "paragraph",
+      nodes: [paragraphNode({ charRange: { start: 0, end: 5 } }), paragraphNode({ id: "next", charRange: { start: 12, end: 18 } })] });
+    expect(result.existsInText).toBe(true);
+    expect(result.withinScope).toBe(false);
+  });
 });

@@ -79,23 +79,15 @@ code,
   background-color: var(--bg) !important;
 }
 
-/* react-pdf-highlighter-extended uses plain (non-CSS-modules) class names,
-   so we can safely recolor .TextHighlight__part per our own wrapper class —
-   each Lens color vs human blue, matching the configured Lens identity's marker
-   semantics. !important overrides the library's own default yellow. */
-.pxr-highlight-agent .TextHighlight__part {
-  background: var(--lens-highlight, rgba(59, 108, 183, 0.25)) !important;
-  box-shadow: inset 0 -2px 0 var(--lens-color, #3B6CB7);
-}
-.pxr-highlight-human .TextHighlight__part {
-  background: rgba(64, 98, 140, 0.16) !important;
-  box-shadow: inset 0 -2px 0 var(--human);
-}
+/* Use one neutral fill for all annotations; color identifies the underline. */
 .pxr-highlight-agent .TextHighlight__part,
 .pxr-highlight-human .TextHighlight__part {
+  background: rgba(110, 110, 110, 0.18) !important;
+  box-shadow: inset 0 -2px 0 var(--annotation-color, var(--human));
   cursor: pointer;
   pointer-events: auto;
 }
+.pxr-highlight-draft .TextHighlight__part { pointer-events: none; cursor: default; }
 /* `isScrolledTo` (driven by the library's own scrollToHighlight, see
    PxrHighlightContainer.tsx) adds TextHighlight--scrolledTo automatically —
    it clears itself once the user scrolls away, so no manual timer needed
@@ -585,3 +577,9 @@ textarea.pxr-input {
 .pxr-comment-text-toggle { display: block; margin-top: 4px; padding: 2px 0; border: 0; background: transparent; color: var(--text-muted); font: inherit; font-size: 11px; cursor: pointer; }
 .pxr-comment-text-toggle:hover { color: var(--text); text-decoration: underline; }
 .pxr-comment-text-toggle:focus-visible { outline: 2px solid var(--accent-blue-soft); outline-offset: 2px; border-radius: 2px; }
+
+.pxr-annotation-colors { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+.pxr-annotation-colors button { width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; color: white; font-size: 11px; line-height: 16px; }
+.pxr-annotation-colors button[aria-pressed="true"] { outline: 1px solid var(--text); outline-offset: 2px; }
+.pxr-annotation-colors button:focus-visible { outline: 2px solid var(--accent-blue-soft); outline-offset: 2px; }
+.pxr-annotation-colors button:disabled { opacity: 0.5; cursor: default; }

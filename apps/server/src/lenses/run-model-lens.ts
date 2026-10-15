@@ -42,7 +42,7 @@ export function lensItemsToCandidates(params: {
     const range = findEvidenceRange(normalizedText, item.evidenceText);
     if (!range) continue; // not a verbatim quote
 
-    const node = findContainingNode(nodes, range.start);
+    const node = findContainingNode(nodes, range.start) ?? nodes.find(node => node.charRange.start < range.end && node.charRange.end > range.start);
     if (!node) continue; // evidence falls in a paragraph separator, not any real node — can't anchor it
 
     results.push({
