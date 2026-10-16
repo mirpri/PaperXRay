@@ -5,7 +5,7 @@ import type { PxrHighlight } from "./annotations-to-highlights";
 /**
  * The single highlight-rendering component react-pdf-highlighter-extended
  * calls (via context, once per highlight-per-page) for every entry in
- * `highlights`. Gray fills with configurable colored underlines via the CSS
+ * `highlights`. Gray human fills and Lens-colored agent fills, with configurable underlines via the CSS
  * wrapper classes in index.css, and forwards clicks so the sidebar
  * annotation card can be found and emphasized (see pages/ReaderPage.tsx's
  * jumpToCard).

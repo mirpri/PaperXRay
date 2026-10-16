@@ -71,10 +71,27 @@ function LensChipRows({ rows, children }: { rows: number; children: ReactNode })
 
 function ChipSection({ label, rows = 1, children }: { label: string; rows?: number; children: ReactNode }) {
   const items = Children.toArray(children);
+  const hasItems = items.length > 0;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      // Keep browser zoom and native horizontal trackpad gestures intact.
+      if (event.ctrlKey || event.metaKey || Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      if (element.scrollWidth <= element.clientWidth) return;
+      const unit = event.deltaMode === 1 ? CHIP_HEIGHT + CHIP_GAP : event.deltaMode === 2 ? element.clientWidth : 1;
+      const previous = element.scrollLeft;
+      element.scrollLeft += event.deltaY * unit;
+      if (element.scrollLeft !== previous) event.preventDefault();
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [hasItems]);
   if (!items.length) return null;
   return <section aria-label={label} style={{ minWidth: 0, display: "grid", gridTemplateColumns: "42px minmax(0, 1fr)", gap: 6 }}>
     <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: `${CHIP_HEIGHT}px`, whiteSpace: "nowrap" }}>{label}</div>
-    <div className="pxr-lens-chip-scroll" style={{ overflowX: "auto", overflowY: "hidden" }}>
+    <div ref={scrollRef} className="pxr-lens-chip-scroll" style={{ overflowX: "auto", overflowY: "hidden" }}>
       <LensChipRows rows={rows}>{items}</LensChipRows>
     </div>
   </section>;

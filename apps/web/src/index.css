@@ -79,13 +79,18 @@ code,
   background-color: var(--bg) !important;
 }
 
-/* Use one neutral fill for all annotations; color identifies the underline. */
+/* Human annotations use a neutral fill; agent annotations retain their Lens color. */
 .pxr-highlight-agent .TextHighlight__part,
 .pxr-highlight-human .TextHighlight__part {
-  background: rgba(110, 110, 110, 0.18) !important;
   box-shadow: inset 0 -2px 0 var(--annotation-color, var(--human));
   cursor: pointer;
   pointer-events: auto;
+}
+.pxr-highlight-agent .TextHighlight__part {
+  background: color-mix(in srgb, var(--annotation-color, var(--agent)) 26%, transparent) !important;
+}
+.pxr-highlight-human .TextHighlight__part {
+  background: rgba(110, 110, 110, 0.18) !important;
 }
 .pxr-highlight-draft .TextHighlight__part { pointer-events: none; cursor: default; }
 /* `isScrolledTo` (driven by the library's own scrollToHighlight, see
